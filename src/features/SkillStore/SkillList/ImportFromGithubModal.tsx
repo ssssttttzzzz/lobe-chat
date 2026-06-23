@@ -1,11 +1,13 @@
 'use client';
 
 import { Alert, Flexbox, Icon, Input } from '@lobehub/ui';
+import { GithubIcon } from '@lobehub/ui/icons';
 import { App, Button, Modal, Typography } from 'antd';
-import { ArrowLeftRight, Github, Sparkles } from 'lucide-react';
+import { ArrowLeftRight, Sparkles } from 'lucide-react';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { usePermission } from '@/hooks/usePermission';
 import { useToolStore } from '@/store/tool';
 
 interface ImportFromGithubModalProps {
@@ -20,6 +22,7 @@ const ImportFromGithubModal = memo<ImportFromGithubModalProps>(({ open, onOpenCh
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [url, setUrl] = useState('');
+  const { allowed: canCreate } = usePermission('create_content');
 
   const handleClose = () => {
     onOpenChange(false);
@@ -29,7 +32,7 @@ const ImportFromGithubModal = memo<ImportFromGithubModalProps>(({ open, onOpenCh
 
   const handleImport = async () => {
     const trimmed = url.trim();
-    if (!trimmed) return;
+    if (!canCreate || !trimmed) return;
 
     setLoading(true);
     setError(null);
@@ -49,7 +52,7 @@ const ImportFromGithubModal = memo<ImportFromGithubModalProps>(({ open, onOpenCh
     <Modal destroyOnClose footer={null} open={open} title={null} width={480} onCancel={handleClose}>
       <Flexbox align="center" gap={16} padding={'16px 0'}>
         <Flexbox horizontal align="center" gap={8}>
-          <Icon icon={Github} size={28} />
+          <Icon icon={GithubIcon} size={28} />
           <Icon
             icon={ArrowLeftRight}
             size={16}
@@ -76,6 +79,7 @@ const ImportFromGithubModal = memo<ImportFromGithubModalProps>(({ open, onOpenCh
         <Flexbox gap={8}>
           <Typography.Text strong>URL</Typography.Text>
           <Input
+            disabled={!canCreate}
             placeholder={t('agentSkillModal.github.urlPlaceholder')}
             value={url}
             onPressEnter={handleImport}
@@ -86,7 +90,7 @@ const ImportFromGithubModal = memo<ImportFromGithubModalProps>(({ open, onOpenCh
           />
         </Flexbox>
 
-        <Button block loading={loading} type="primary" onClick={handleImport}>
+        <Button block disabled={!canCreate} loading={loading} type="primary" onClick={handleImport}>
           {t('common:import')}
         </Button>
       </Flexbox>

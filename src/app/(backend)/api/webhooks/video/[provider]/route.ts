@@ -1,5 +1,9 @@
 import { timingSafeEqual } from 'node:crypto';
 
+import {
+  buildMappedBusinessModelFields,
+  resolveBusinessModelMapping,
+} from '@lobechat/business-model-runtime';
 import { ModelRuntime } from '@lobechat/model-runtime';
 import {
   AsyncTaskError,
@@ -15,8 +19,7 @@ import { type RuntimeVideoGenParams } from 'model-bank';
 import { NextResponse } from 'next/server';
 
 import { chargeAfterGenerate } from '@/business/server/video-generation/chargeAfterGenerate';
-// TODO: temporarily disabled until notification UI is polished
-// import { notifyVideoCompleted } from '@/business/server/video-generation/notifyVideoCompleted';
+import { notifyVideoCompleted } from '@/business/server/video-generation/notifyVideoCompleted';
 import { AsyncTaskModel } from '@/database/models/asyncTask';
 import { GenerationModel } from '@/database/models/generation';
 import { generationBatches } from '@/database/schemas';
@@ -116,7 +119,11 @@ export const POST = async (req: Request, { params }: { params: Promise<{ provide
       return NextResponse.json({ success: true });
     }
 
-    const generationModel = new GenerationModel(db, asyncTask.userId);
+    const generationModel = new GenerationModel(
+      db,
+      asyncTask.userId,
+      asyncTask.workspaceId ?? undefined,
+    );
 
     // Find generation by asyncTaskId
     const generation = await generationModel.findByAsyncTaskId(asyncTask.id);
@@ -130,14 +137,24 @@ export const POST = async (req: Request, { params }: { params: Promise<{ provide
 
     log('Found generation: %s', generation.id);
 
-    asyncTaskModel = new AsyncTaskModel(db, asyncTask.userId);
+    asyncTaskModel = new AsyncTaskModel(db, asyncTask.userId, asyncTask.workspaceId ?? undefined);
 
     // Query batch to get model info for both error and success paths
     const batch = await db.query.generationBatches.findFirst({
       where: eq(generationBatches.id, generation.generationBatchId!),
     });
-    const resolvedModel =
-      result.status === 'success' ? (result.model ?? batch?.model ?? '') : (batch?.model ?? '');
+    const requestedModel = batch?.model ?? '';
+    // Resolve mapping so spend log metadata and pricing lookup use the billed model id,
+    // not the user-facing alias nor the provider-reported internal name.
+    const { resolvedModelId } = requestedModel
+      ? await resolveBusinessModelMapping(provider, requestedModel)
+      : { resolvedModelId: '' };
+
+    const mappedModelFields = buildMappedBusinessModelFields({
+      provider,
+      requestedModelId: resolvedModelId === requestedModel ? undefined : requestedModel,
+      resolvedModelId,
+    });
 
     // Handle error result: refund precharge and mark task as error
     if (result.status === 'error') {
@@ -153,10 +170,10 @@ export const POST = async (req: Request, { params }: { params: Promise<{ provide
           metadata: {
             asyncTaskId: asyncTask.id,
             generationBatchId: generation.generationBatchId!,
-            modelId: resolvedModel,
             topicId: batch?.generationTopicId,
+            ...mappedModelFields,
           },
-          model: resolvedModel,
+          model: resolvedModelId,
           prechargeResult: metadata?.precharge as any,
           provider,
           userId: asyncTask.userId,
@@ -169,7 +186,11 @@ export const POST = async (req: Request, { params }: { params: Promise<{ provide
     }
 
     // Handle success result: download video → process → upload S3 → create asset and file
-    const videoService = new VideoGenerationService(db, asyncTask.userId);
+    const videoService = new VideoGenerationService(
+      db,
+      asyncTask.userId,
+      asyncTask.workspaceId ?? undefined,
+    );
     const processResult = await videoService.processVideoForGeneration(result.videoUrl);
 
     const asset: VideoGenerationAsset = {
@@ -203,29 +224,33 @@ export const POST = async (req: Request, { params }: { params: Promise<{ provide
       status: AsyncTaskStatus.Success,
     });
 
-    // TODO: temporarily disabled until notification UI is polished
-    // notifyVideoCompleted({
-    //   generationBatchId: generation.generationBatchId!,
-    //   model: resolvedModel,
-    //   prompt: batch?.prompt ?? '',
-    //   topicId: batch?.generationTopicId,
-    //   userId: asyncTask.userId,
-    // }).catch((err) => console.error('[video-webhook] notification failed:', err));
+    try {
+      await notifyVideoCompleted({
+        generationBatchId: generation.generationBatchId!,
+        model: requestedModel,
+        prompt: batch?.prompt ?? '',
+        topicId: batch?.generationTopicId,
+        userId: asyncTask.userId,
+      });
+    } catch (err) {
+      console.error('[video-webhook] notification failed:', err);
+    }
 
     // Charge after successful video generation
     try {
       await chargeAfterGenerate({
         computePriceParams: {
           generateAudio: (batch?.config as RuntimeVideoGenParams)?.generateAudio,
+          resolution: (batch?.config as RuntimeVideoGenParams)?.resolution,
         },
         latency: duration,
         metadata: {
           asyncTaskId: asyncTask.id,
           generationBatchId: generation.generationBatchId!,
-          modelId: resolvedModel,
           topicId: batch?.generationTopicId,
+          ...mappedModelFields,
         },
-        model: resolvedModel,
+        model: resolvedModelId,
         prechargeResult: metadata?.precharge as any,
         provider,
         usage: result.usage,

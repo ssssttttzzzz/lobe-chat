@@ -1,9 +1,14 @@
 'use client';
 
 import { FILE_URL } from '@lobechat/business-const';
+import {
+  CUSTOM_DOCUMENT_FILE_TYPE,
+  CUSTOM_FOLDER_FILE_TYPE,
+  DERIVED_DOCUMENT_SOURCE_TYPE,
+} from '@lobechat/const';
 import { Notion } from '@lobehub/icons';
 import { type MenuProps } from '@lobehub/ui';
-import { Button, DropdownMenu, Icon } from '@lobehub/ui';
+import { Button, DropdownMenu, Icon, Tooltip } from '@lobehub/ui';
 import { Upload } from 'antd';
 import { FilePenLine, FileUp, FolderIcon, FolderUp, Link, Plus } from 'lucide-react';
 import { type ChangeEvent } from 'react';
@@ -13,6 +18,8 @@ import { useTranslation } from 'react-i18next';
 import { message } from '@/components/AntdStaticMethods';
 import GuideModal from '@/components/GuideModal';
 import GuideVideo from '@/components/GuideVideo';
+import { usePermission } from '@/hooks/usePermission';
+import { useCurrentFolderId } from '@/routes/(main)/resource/features/hooks/useCurrentFolderId';
 import { useResourceManagerStore } from '@/routes/(main)/resource/features/store';
 import { useFileStore } from '@/store/file';
 import { FilesTabs } from '@/types/files';
@@ -46,28 +53,22 @@ const AddButton = () => {
   const uploadFolderWithStructure = useFileStore((s) => s.uploadFolderWithStructure);
   const createResourceAndSync = useFileStore((s) => s.createResourceAndSync);
   const [menuOpen, setMenuOpen] = useState(false);
+  const currentFolderId = useCurrentFolderId();
+  const { allowed: canCreate, reason } = usePermission('create_content');
 
   // TODO: Migrate Notion import to use createResource
   // Keep old functions temporarily for components not yet migrated
   const createDocument = useFileStore((s) => s.createDocument);
 
-  const [
-    libraryId,
-    category,
-    currentFolderId,
-    setCategory,
-    setCurrentViewItemId,
-    setMode,
-    setPendingRenameItemId,
-  ] = useResourceManagerStore((s) => [
-    s.libraryId,
-    s.category,
-    s.currentFolderId,
-    s.setCategory,
-    s.setCurrentViewItemId,
-    s.setMode,
-    s.setPendingRenameItemId,
-  ]);
+  const [libraryId, category, setCategory, setCurrentViewItemId, setMode, setPendingRenameItemId] =
+    useResourceManagerStore((s) => [
+      s.libraryId,
+      s.category,
+      s.setCategory,
+      s.setCurrentViewItemId,
+      s.setMode,
+      s.setPendingRenameItemId,
+    ]);
 
   const handleOpenPageEditor = useCallback(async () => {
     // Navigate to "All" category first if not already there
@@ -79,10 +80,10 @@ const AddButton = () => {
     const untitledTitle = t('pageList.untitled');
     const realId = await createResourceAndSync({
       content: '',
-      fileType: 'custom/document',
+      fileType: CUSTOM_DOCUMENT_FILE_TYPE,
       knowledgeBaseId: libraryId,
       parentId: currentFolderId ?? undefined,
-      sourceType: 'document',
+      sourceType: DERIVED_DOCUMENT_SOURCE_TYPE,
       title: untitledTitle,
     });
 
@@ -114,7 +115,7 @@ const AddButton = () => {
       // Filter for folders at the same level
       const foldersAtSameLevel = resourceList.filter(
         (item) =>
-          item.fileType === 'custom/folder' &&
+          item.fileType === CUSTOM_FOLDER_FILE_TYPE &&
           (item.parentId ?? null) === (currentFolderId ?? null),
       );
 
@@ -133,10 +134,10 @@ const AddButton = () => {
       // Wait for sync to complete to get the real ID
       const realId = await createResourceAndSync({
         content: '',
-        fileType: 'custom/folder',
+        fileType: CUSTOM_FOLDER_FILE_TYPE,
         knowledgeBaseId: libraryId,
         parentId: currentFolderId ?? undefined,
-        sourceType: 'document',
+        sourceType: DERIVED_DOCUMENT_SOURCE_TYPE,
         title: uniqueName,
       });
 
@@ -167,10 +168,6 @@ const AddButton = () => {
     createDocument,
     currentFolderId,
     libraryId,
-    refetchResources: async () => {
-      const { revalidateResources } = await import('@/store/file/slices/resource/hooks');
-      await revalidateResources();
-    },
     t,
   });
 
@@ -267,15 +264,20 @@ const AddButton = () => {
   return (
     <>
       <DropdownMenu
-        items={items}
+        items={canCreate ? items : []}
         open={menuOpen}
         placement="bottomRight"
         trigger="both"
-        onOpenChange={setMenuOpen}
+        onOpenChange={(open) => {
+          if (!canCreate) return;
+          setMenuOpen(open);
+        }}
       >
-        <Button data-no-highlight icon={Plus} type="primary">
-          {t('addLibrary')}
-        </Button>
+        <Tooltip title={reason}>
+          <Button data-no-highlight disabled={!canCreate} icon={Plus} type="primary">
+            {t('addLibrary')}
+          </Button>
+        </Tooltip>
       </DropdownMenu>
       <GuideModal
         cancelText={t('header.actions.notionGuide.cancel')}

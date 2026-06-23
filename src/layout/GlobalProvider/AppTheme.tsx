@@ -8,7 +8,7 @@ import { ConfigProvider, FontLoader, ThemeProvider } from '@lobehub/ui';
 import { message as antdMessage } from 'antd';
 import { AppConfigContext } from 'antd/es/app/context';
 import { createStaticStyles, cx, useTheme } from 'antd-style';
-import * as motion from 'motion/react-m';
+import * as m from 'motion/react-m';
 import { type ReactNode } from 'react';
 import { memo, useEffect, useMemo, useState } from 'react';
 
@@ -18,6 +18,8 @@ import { LOBE_THEME_NEUTRAL_COLOR, LOBE_THEME_PRIMARY_COLOR } from '@/const/them
 import { isDesktop } from '@/const/version';
 import { useIsDark } from '@/hooks/useIsDark';
 import { getUILocaleAndResources } from '@/libs/getUILocaleAndResources';
+import type { UILocaleResources } from '@/libs/getUILocaleAndResources.utils';
+import { resolveUILocale } from '@/libs/getUILocaleAndResources.utils';
 import Image from '@/libs/next/Image';
 import { useGlobalStore } from '@/store/global';
 import { systemStatusSelectors } from '@/store/global/selectors';
@@ -115,20 +117,22 @@ const AppTheme = memo<AppThemeProps>(
       [messageTop],
     );
 
-    const [uiResources, setUIResources] = useState<any>(null);
-    const uiLocale = useMemo(() => {
-      if (language.startsWith('zh')) return 'zh-CN';
-      if (language.startsWith('en')) return 'en-US';
-      return 'en-US';
-    }, [language]);
+    const [uiResources, setUIResources] = useState<UILocaleResources>();
+    const [uiLocale, setUILocale] = useState(() => resolveUILocale(language).uiLocale);
 
     useEffect(() => {
       let mounted = true;
-      getUILocaleAndResources(language).then(({ resources }) => {
-        if (mounted) {
-          setUIResources(resources);
-        }
-      });
+      setUILocale(resolveUILocale(language).uiLocale);
+      getUILocaleAndResources(language)
+        .then(({ locale, resources }) => {
+          if (mounted) {
+            setUILocale(locale);
+            setUIResources(resources);
+          }
+        })
+        .catch((error) => {
+          console.error('Failed to load UI locale resources:', error);
+        });
       return () => {
         mounted = false;
       };
@@ -176,7 +180,7 @@ const AppTheme = memo<AppThemeProps>(
           <AntdStaticMethods />
           <ConfigProvider
             locale={uiLocale}
-            motion={motion}
+            motion={m}
             resources={uiResources}
             config={{
               aAs: Link,

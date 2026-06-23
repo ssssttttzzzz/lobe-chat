@@ -5,8 +5,8 @@ import { Command } from 'cmdk';
 import { Bot, Image } from 'lucide-react';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
 
+import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { useHomeStore } from '@/store/home';
 import { homeAgentListSelectors } from '@/store/home/selectors';
 
@@ -17,7 +17,7 @@ import { useCommandMenu } from './useCommandMenu';
 
 const AskAIMenu = memo(() => {
   const { t } = useTranslation(['common', 'chat', 'home']);
-  const navigate = useNavigate();
+  const navigate = useWorkspaceAwareNavigate();
   const { handleAskLobeAI, handleAIPainting, closeCommandMenu } = useCommandMenu();
   const { search } = useCommandMenuContext();
 
@@ -34,7 +34,7 @@ const AskAIMenu = memo(() => {
     closeCommandMenu(); // Close immediately
     if (trimmedSearch) {
       // Use sendAsAgent to create a blank agent and open agent builder
-      useHomeStore.getState().sendAsAgent(trimmedSearch);
+      useHomeStore.getState().sendAsAgent({ message: trimmedSearch });
     }
   };
 
@@ -43,7 +43,7 @@ const AskAIMenu = memo(() => {
     closeCommandMenu(); // Close immediately
     if (trimmedSearch) {
       // Use sendAsGroup to create a blank group and open group builder
-      useHomeStore.getState().sendAsGroup(trimmedSearch);
+      useHomeStore.getState().sendAsGroup({ message: trimmedSearch });
     }
   };
 

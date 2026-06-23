@@ -1,8 +1,11 @@
+import { CUSTOM_DOCUMENT_FILE_TYPE, DERIVED_DOCUMENT_SOURCE_TYPE } from '@lobechat/const';
+
 import { lambdaClient } from '@/libs/trpc/client';
 import {
   type CheckFileHashResult,
   type FileItem,
   type FileListItem,
+  type KnowledgeItemStatus,
   type QueryFileListParams,
   type QueryFileListSchemaType,
   type UploadFileParams,
@@ -58,6 +61,18 @@ export class FileService {
     return lambdaClient.file.getKnowledgeItems.query(params as QueryFileListSchemaType);
   };
 
+  getKnowledgeItemStatusesByIds = async (ids: string[]): Promise<KnowledgeItemStatus[]> => {
+    return lambdaClient.file.getKnowledgeItemStatusesByIds.query({ ids });
+  };
+
+  resolveKnowledgeItemIds = async (params: QueryFileListParams) => {
+    return lambdaClient.file.resolveKnowledgeItemIds.query(params as QueryFileListSchemaType);
+  };
+
+  deleteKnowledgeItemsByQuery = async (params: QueryFileListParams) => {
+    return lambdaClient.file.deleteKnowledgeItemsByQuery.mutate(params as QueryFileListSchemaType);
+  };
+
   // V2.0 Migrate from getFileItem to getKnowledgeItem
   // This method handles both files (file_ prefix) and documents (docs_ prefix)
   getKnowledgeItem = async (id: string) => {
@@ -77,7 +92,7 @@ export class FileService {
         editorData: doc.editorData,
         embeddingError: null,
         embeddingStatus: null,
-        fileType: doc.fileType || 'custom/document',
+        fileType: doc.fileType || CUSTOM_DOCUMENT_FILE_TYPE,
         finishEmbedding: false,
         id: doc.id,
         metadata: doc.metadata,
@@ -85,7 +100,7 @@ export class FileService {
         parentId: doc.parentId,
         size: doc.totalCharCount || 0,
         slug: doc.slug,
-        sourceType: 'document',
+        sourceType: DERIVED_DOCUMENT_SOURCE_TYPE,
         updatedAt: doc.updatedAt ? new Date(doc.updatedAt) : new Date(),
         url: doc.source || '',
       } as FileListItem;
@@ -107,7 +122,14 @@ export class FileService {
     return lambdaClient.file.removeFileAsyncTask.mutate({ id, type });
   };
 
-  updateFile = async (id: string, data: { parentId?: string | null }) => {
+  updateFile = async (
+    id: string,
+    data: {
+      metadata?: Record<string, any>;
+      name?: string;
+      parentId?: string | null;
+    },
+  ) => {
     return lambdaClient.file.updateFile.mutate({ id, ...data });
   };
 
@@ -117,6 +139,22 @@ export class FileService {
 
   getRecentPages = async (limit?: number) => {
     return lambdaClient.file.recentPages.query({ limit });
+  };
+
+  transferEntity = async (
+    id: string,
+    entityType: 'document' | 'file' | 'folder',
+    targetWorkspaceId: string | null,
+  ) => {
+    return lambdaClient.file.transferEntity.mutate({ entityType, id, targetWorkspaceId });
+  };
+
+  copyEntityToWorkspace = async (
+    id: string,
+    entityType: 'document' | 'file' | 'folder',
+    targetWorkspaceId: string | null,
+  ) => {
+    return lambdaClient.file.copyEntityToWorkspace.mutate({ entityType, id, targetWorkspaceId });
   };
 }
 

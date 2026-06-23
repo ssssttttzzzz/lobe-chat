@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { App } from '@/core/App';
 
+import CliCtr from '../CliCtr';
 import ShellCommandCtr from '../ShellCommandCtr';
 
 const { ipcMainHandleMock } = vi.hoisted(() => ({
@@ -25,14 +26,21 @@ vi.mock('@/utils/logger', () => ({
 
 // Mock child_process for the shared package
 vi.mock('node:child_process', () => ({
+  execFile: vi.fn(),
   spawn: vi.fn(),
 }));
 
-vi.mock('node:crypto', () => ({
-  randomUUID: vi.fn(() => 'test-uuid-123'),
+vi.mock('../CliCtr', () => ({
+  default: class CliCtr {},
 }));
 
-const mockApp = {} as unknown as App;
+const mockCliCtr = {
+  runCliCommand: vi.fn().mockResolvedValue({ exitCode: 0, stderr: '', stdout: 'cli output\n' }),
+};
+
+const mockApp = {
+  getController: vi.fn((c: unknown) => (c === CliCtr ? mockCliCtr : undefined)),
+} as unknown as App;
 
 describe('ShellCommandCtr (thin wrapper)', () => {
   let ctr: ShellCommandCtr;
@@ -48,7 +56,9 @@ describe('ShellCommandCtr (thin wrapper)', () => {
     mockChildProcess = {
       stdout: { on: vi.fn() },
       stderr: { on: vi.fn() },
+      off: vi.fn(),
       on: vi.fn(),
+      once: vi.fn(),
       kill: vi.fn(),
       exitCode: null,
     };
@@ -59,6 +69,10 @@ describe('ShellCommandCtr (thin wrapper)', () => {
 
   it('should delegate handleRunCommand to shared runCommand', async () => {
     mockChildProcess.on.mockImplementation((event: string, callback: any) => {
+      if (event === 'exit') setTimeout(() => callback(0), 10);
+      return mockChildProcess;
+    });
+    mockChildProcess.once.mockImplementation((event: string, callback: any) => {
       if (event === 'exit') setTimeout(() => callback(0), 10);
       return mockChildProcess;
     });
@@ -78,14 +92,21 @@ describe('ShellCommandCtr (thin wrapper)', () => {
   });
 
   it('should delegate handleGetCommandOutput to processManager', async () => {
-    mockChildProcess.on.mockImplementation(() => mockChildProcess);
+    mockChildProcess.on.mockImplementation((event: string, callback: any) => {
+      if (event === 'exit') setTimeout(() => callback(0), 10);
+      return mockChildProcess;
+    });
+    mockChildProcess.once.mockImplementation((event: string, callback: any) => {
+      if (event === 'exit') setTimeout(() => callback(0), 10);
+      return mockChildProcess;
+    });
     mockChildProcess.stdout.on.mockImplementation((event: string, callback: any) => {
       if (event === 'data') setTimeout(() => callback(Buffer.from('bg output\n')), 5);
       return mockChildProcess.stdout;
     });
     mockChildProcess.stderr.on.mockImplementation(() => mockChildProcess.stderr);
 
-    await ctr.handleRunCommand({
+    const runResult = await ctr.handleRunCommand({
       command: 'test',
       run_in_background: true,
     });
@@ -93,7 +114,7 @@ describe('ShellCommandCtr (thin wrapper)', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     const result = await ctr.handleGetCommandOutput({
-      shell_id: 'test-uuid-123',
+      shell_id: runResult.shell_id!,
     });
 
     expect(result.success).toBe(true);
@@ -102,20 +123,43 @@ describe('ShellCommandCtr (thin wrapper)', () => {
 
   it('should delegate handleKillCommand to processManager', async () => {
     mockChildProcess.on.mockImplementation(() => mockChildProcess);
+    mockChildProcess.once.mockImplementation(() => mockChildProcess);
     mockChildProcess.stdout.on.mockImplementation(() => mockChildProcess.stdout);
     mockChildProcess.stderr.on.mockImplementation(() => mockChildProcess.stderr);
 
-    await ctr.handleRunCommand({
+    const runResult = await ctr.handleRunCommand({
       command: 'test',
       run_in_background: true,
     });
 
     const result = await ctr.handleKillCommand({
-      shell_id: 'test-uuid-123',
+      shell_id: runResult.shell_id!,
     });
 
     expect(result.success).toBe(true);
     expect(mockChildProcess.kill).toHaveBeenCalled();
+  });
+
+  it('should route lh commands to CliCtr.runCliCommand', async () => {
+    const result = await ctr.handleRunCommand({
+      command: 'lh status --json',
+      description: 'lh status',
+    });
+
+    expect(mockCliCtr.runCliCommand).toHaveBeenCalledWith('status --json');
+    expect(result.success).toBe(true);
+    expect(result.stdout).toContain('cli output');
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it('should route lobehub commands to CliCtr.runCliCommand', async () => {
+    const result = await ctr.handleRunCommand({
+      command: 'lobehub search test',
+      description: 'lobehub search',
+    });
+
+    expect(mockCliCtr.runCliCommand).toHaveBeenCalledWith('search test');
+    expect(result.success).toBe(true);
   });
 
   it('should return error for non-existent shell_id', async () => {

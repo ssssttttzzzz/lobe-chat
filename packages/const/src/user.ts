@@ -1,5 +1,4 @@
 import type { UserPreference } from '@lobechat/types';
-import { TopicDisplayMode } from '@lobechat/types';
 
 /**
  * Current onboarding flow version.
@@ -14,8 +13,14 @@ export const DEFAULT_PREFERENCE: UserPreference = {
     topic: true,
   },
   lab: {
+    enableAgentDocumentFloatingChatPanel: false,
+    enableAgentSelfIteration: false,
+    enableFleet: false,
     enableInputMarkdown: true,
+    enablePlatformAgent: false,
   },
-  topicDisplayMode: TopicDisplayMode.ByUpdatedTime,
+  topicGroupMode: 'byTime',
+  topicIncludeCompleted: false,
+  topicSortBy: 'updatedAt',
   useCmdEnterToSend: false,
 };

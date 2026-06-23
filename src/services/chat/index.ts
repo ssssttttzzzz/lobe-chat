@@ -1,19 +1,23 @@
 import { AgentBuilderIdentifier } from '@lobechat/builtin-tool-agent-builder';
-import { KLAVIS_SERVER_TYPES, LOBEHUB_SKILL_PROVIDERS } from '@lobechat/const';
+import {
+  COMPOSIO_APP_TYPES,
+  LOBEHUB_SKILL_PROVIDERS,
+  REQUEST_AGENT_ID_HEADER,
+  REQUEST_TOPIC_ID_HEADER,
+  REQUEST_TRIGGER_HEADER,
+} from '@lobechat/const';
 import { type OfficialToolItem } from '@lobechat/context-engine';
 import { type FetchSSEOptions } from '@lobechat/fetch-sse';
-import { fetchSSE, getMessageError, standardizeAnimationStyle } from '@lobechat/fetch-sse';
-import { type ChatCompletionErrorPayload } from '@lobechat/model-runtime';
-import { AgentRuntimeError } from '@lobechat/model-runtime';
-import {
-  type RuntimeInitialContext,
-  type RuntimeStepContext,
-  type TracePayload,
-  type UIChatMessage,
+import { fetchSSE, standardizeAnimationStyle } from '@lobechat/fetch-sse';
+import type { ChatCompletionErrorPayload } from '@lobechat/model-runtime';
+import { AgentRuntimeError, isResponsesAPIModel } from '@lobechat/model-runtime';
+import type {
+  RuntimeInitialContext,
+  RuntimeStepContext,
+  TracePayload,
+  UIChatMessage,
 } from '@lobechat/types';
 import { ChatErrorType, TraceTagMap } from '@lobechat/types';
-import { type PluginRequestPayload } from '@lobehub/chat-plugin-sdk';
-import { createHeadersWithPluginSettings } from '@lobehub/chat-plugin-sdk';
 import { merge } from 'es-toolkit/compat';
 import { ModelProvider } from 'model-bank';
 
@@ -30,9 +34,8 @@ import { getChatStoreState } from '@/store/chat';
 import { getToolStoreState } from '@/store/tool';
 import {
   builtinToolSelectors,
-  klavisStoreSelectors,
+  composioStoreSelectors,
   lobehubSkillStoreSelectors,
-  pluginSelectors,
 } from '@/store/tool/selectors';
 import { getUserStoreState, useUserStore } from '@/store/user';
 import {
@@ -42,7 +45,7 @@ import {
 } from '@/store/user/selectors';
 import { type ChatStreamPayload, type OpenAIChatMessage } from '@/types/openai/chat';
 import { createErrorResponse } from '@/utils/errorResponse';
-import { createTraceHeader, getTraceId } from '@/utils/trace';
+import { createTraceHeader } from '@/utils/trace';
 
 import { createHeaderWithAuth } from '../_auth';
 import { API_ENDPOINTS } from '../_url';
@@ -56,13 +59,23 @@ import {
 } from './mecha';
 import { type FetchOptions } from './types';
 
+const defaultProvider = ModelProvider.OpenAI;
+const providersWithDeploymentName = new Set<string>([
+  ModelProvider.Azure,
+  ModelProvider.AzureAI,
+  ModelProvider.KimiCodingPlan,
+  ModelProvider.Qwen,
+  ModelProvider.Spark,
+  ModelProvider.Volcengine,
+  ModelProvider.VolcengineCodingPlan,
+]);
 interface GetChatCompletionPayload extends Partial<Omit<ChatStreamPayload, 'messages'>> {
   agentId?: string;
   groupId?: string;
   messages: UIChatMessage[];
   /**
    * Pre-resolved agent config from AgentRuntime layer.
-   * Required to ensure config consistency and proper isSubTask filtering.
+   * Required to ensure config consistency and proper isSubAgent filtering.
    */
   resolvedAgentConfig: ResolvedAgentConfig;
   topicId?: string;
@@ -92,6 +105,7 @@ interface CreateAssistantMessageStream extends FetchSSEOptions {
   historySummary?: string;
   /** Initial context for page editor (captured at operation start) */
   initialContext?: RuntimeInitialContext;
+  metadata?: FetchOptions['metadata'];
   params: GetChatCompletionPayload;
   /** Step context for page editor (updated each step) */
   stepContext?: RuntimeStepContext;
@@ -99,6 +113,17 @@ interface CreateAssistantMessageStream extends FetchSSEOptions {
 }
 
 class ChatService {
+  private resolveAgentDocumentsTargetId = (
+    targetAgentId: string,
+    enabledToolIds: string[] = [],
+  ): string | undefined => {
+    if (enabledToolIds.includes(AgentBuilderIdentifier)) {
+      return getChatStoreState().activeAgentId || targetAgentId || undefined;
+    }
+
+    return targetAgentId || undefined;
+  };
+
   createAssistantMessage = async (
     {
       messages,
@@ -121,7 +146,7 @@ class ChatService {
 
     // =================== 1. use pre-resolved agent config =================== //
     // Config is resolved in AgentRuntime layer (internal_createAgentState)
-    // which handles isSubTask filtering, disableTools, and tools generation
+    // which handles isSubAgent filtering, disableTools, and tools generation
 
     const targetAgentId = getTargetAgentId(agentId);
 
@@ -155,7 +180,20 @@ class ChatService {
     // Note: When Agent Builder is active, we need to get the context of the agent being edited,
     // which is stored in chatStore.activeAgentId, not the targetAgentId (which is the Agent Builder itself)
     const isAgentBuilderEnabled = enabledToolIds.includes(AgentBuilderIdentifier);
+    const documentsAgentId = this.resolveAgentDocumentsTargetId(targetAgentId, enabledToolIds);
     let agentBuilderContext;
+    let agentDocuments = documentsAgentId
+      ? agentSelectors.getAgentDocumentsById(documentsAgentId)(getAgentStoreState())
+      : undefined;
+
+    if (documentsAgentId && agentDocuments === undefined) {
+      try {
+        agentDocuments = await getAgentStoreState().ensureAgentDocuments(documentsAgentId);
+      } catch (error) {
+        // Agent documents are optional on the client; keep generation working if hydration fails.
+        console.error('[ChatService] Failed to ensure agent documents:', error);
+      }
+    }
 
     if (isAgentBuilderEnabled) {
       const activeAgentId = getChatStoreState().activeAgentId || '';
@@ -164,19 +202,19 @@ class ChatService {
       const activeAgentConfig =
         agentSelectors.getAgentConfigById(activeAgentId)(getAgentStoreState());
 
-      // Build official tools list (builtin tools + Klavis tools)
+      // Build official tools list (builtin tools + Composio tools)
       const toolState = getToolStoreState();
       const enabledPlugins = activeAgentConfig?.plugins || [];
 
       const officialTools: OfficialToolItem[] = [];
 
-      // Get builtin tools (excluding Klavis tools)
+      // Get builtin tools (excluding Composio tools)
       const builtinTools = builtinToolSelectors.metaList(toolState);
-      const klavisIdentifiers = new Set(KLAVIS_SERVER_TYPES.map((t) => t.identifier));
+      const composioIdentifiers = new Set(COMPOSIO_APP_TYPES.map((t) => t.identifier));
 
       for (const tool of builtinTools) {
-        // Skip Klavis tools in builtin list (they'll be shown separately)
-        if (klavisIdentifiers.has(tool.identifier)) continue;
+        // Skip Composio tools in builtin list (they'll be shown separately)
+        if (composioIdentifiers.has(tool.identifier)) continue;
 
         officialTools.push({
           description: tool.meta?.description,
@@ -188,24 +226,24 @@ class ChatService {
         });
       }
 
-      // Get Klavis tools (if enabled)
-      const isKlavisEnabled =
+      // Get Composio tools (if enabled)
+      const isComposioEnabled =
         typeof window !== 'undefined' &&
-        window.global_serverConfigStore?.getState()?.serverConfig?.enableKlavis;
+        window.global_serverConfigStore?.getState()?.serverConfig?.enableComposio;
 
-      if (isKlavisEnabled) {
-        const allKlavisServers = klavisStoreSelectors.getServers(toolState);
+      if (isComposioEnabled) {
+        const allComposioServers = composioStoreSelectors.getServers(toolState);
 
-        for (const klavisType of KLAVIS_SERVER_TYPES) {
-          const server = allKlavisServers.find((s) => s.identifier === klavisType.identifier);
+        for (const composioType of COMPOSIO_APP_TYPES) {
+          const server = allComposioServers.find((s) => s.identifier === composioType.identifier);
 
           officialTools.push({
-            description: `LobeHub Mcp Server: ${klavisType.label}`,
-            enabled: enabledPlugins.includes(klavisType.identifier),
-            identifier: klavisType.identifier,
+            description: `LobeHub Mcp Server: ${composioType.label}`,
+            enabled: enabledPlugins.includes(composioType.identifier),
+            identifier: composioType.identifier,
             installed: !!server,
-            name: klavisType.label,
-            type: 'klavis',
+            name: composioType.label,
+            type: 'composio',
           });
         }
       }
@@ -242,6 +280,7 @@ class ChatService {
     // Note: agentConfig.systemRole is already resolved by resolveAgentConfig for builtin agents
     const modelMessages = await contextEngineering({
       agentBuilderContext,
+      agentDocuments,
       agentId: targetAgentId,
       // Use raw chatConfig values, not selectors with business logic that may force false
       enableHistoryCount: chatConfig.enableHistoryCount,
@@ -296,6 +335,7 @@ class ChatService {
     onMessageHandle,
     onErrorHandle,
     onFinish,
+    metadata,
     trace,
     historySummary,
     initialContext,
@@ -308,6 +348,7 @@ class ChatService {
       onErrorHandle,
       onFinish,
       onMessageHandle,
+      metadata,
       signal: abortController?.signal,
       stepContext,
       trace: this.mapTrace(trace, TraceTagMap.Chat),
@@ -315,24 +356,23 @@ class ChatService {
   };
 
   getChatCompletion = async (params: Partial<ChatStreamPayload>, options?: FetchOptions) => {
-    const { agentId, signal, responseAnimation, topicId } = options ?? {};
+    const { agentId, metadata, signal, responseAnimation, topicId } = options ?? {};
+    const requestTrigger = metadata?.trigger;
 
     const { provider = ModelProvider.OpenAI, ...res } = params;
 
     // =================== process model =================== //
     // ===================================================== //
     let model = res.model || DEFAULT_AGENT_CONFIG.model;
+    const deploymentName = providersWithDeploymentName.has(provider)
+      ? findDeploymentName(model, provider)
+      : undefined;
+    const shouldUseDeploymentField =
+      (provider === ModelProvider.Azure && isResponsesAPIModel(model)) ||
+      provider === ModelProvider.Spark;
 
-    // if the provider is Azure, get the deployment name as the request model
-    const providersWithDeploymentName = [
-      ModelProvider.Azure,
-      ModelProvider.Volcengine,
-      ModelProvider.AzureAI,
-      ModelProvider.Qwen,
-    ] as string[];
-
-    if (providersWithDeploymentName.includes(provider)) {
-      model = findDeploymentName(model, provider);
+    if (!shouldUseDeploymentField && deploymentName) {
+      model = deploymentName;
     }
 
     // When user explicitly disables Responses API, set apiMode to 'chatCompletion'
@@ -357,7 +397,14 @@ class ChatService {
         stream: chatConfig.enableStreaming !== false, // Default to true if not set
         ...DEFAULT_AGENT_CONFIG.params,
       },
-      { ...res, apiMode, model },
+      {
+        ...res,
+        apiMode,
+        ...(shouldUseDeploymentField &&
+          deploymentName &&
+          deploymentName !== model && { deploymentName }),
+        model,
+      },
     );
 
     // Convert null to undefined for model params to prevent sending null values to API
@@ -407,11 +454,14 @@ class ChatService {
       headers: {
         'Content-Type': 'application/json',
         ...traceHeader,
-        ...(agentId && { 'x-agent-id': agentId }),
-        ...(topicId && { 'x-topic-id': topicId }),
+        ...(agentId && { [REQUEST_AGENT_ID_HEADER]: agentId }),
+        ...(requestTrigger && { [REQUEST_TRIGGER_HEADER]: requestTrigger }),
+        ...(topicId && { [REQUEST_TOPIC_ID_HEADER]: topicId }),
       },
       provider,
     });
+    const { getBusinessTrpcHeaders } = await import('@/business/client/trpc-headers');
+    Object.assign(headers as Record<string, string>, await getBusinessTrpcHeaders());
 
     const { DEFAULT_MODEL_PROVIDER_LIST } = await import('model-bank/modelProviders');
     const providerConfig = DEFAULT_MODEL_PROVIDER_LIST.find((item) => item.id === provider);
@@ -435,43 +485,15 @@ class ChatService {
       onErrorHandle: options?.onErrorHandle,
       onFinish: options?.onFinish,
       onMessageHandle: options?.onMessageHandle,
+      requestContext: {
+        apiMode,
+        fetchOnClient: enableFetchOnClient,
+        model,
+        provider,
+      },
       responseAnimation: mergedResponseAnimation,
       signal,
     });
-  };
-
-  /**
-   * run the plugin api to get result
-   * @param params
-   * @param options
-   */
-  runPluginApi = async (params: PluginRequestPayload, options?: FetchOptions) => {
-    const s = getToolStoreState();
-
-    const settings = pluginSelectors.getPluginSettingsById(params.identifier)(s);
-    const manifest = pluginSelectors.getToolManifestById(params.identifier)(s);
-
-    const traceHeader = createTraceHeader(this.mapTrace(options?.trace, TraceTagMap.ToolCalling));
-
-    const headers = await createHeaderWithAuth({
-      headers: { ...createHeadersWithPluginSettings(settings), ...traceHeader },
-    });
-
-    const gatewayURL = manifest?.gateway ?? API_ENDPOINTS.gateway;
-
-    const res = await fetch(gatewayURL, {
-      body: JSON.stringify({ ...params, manifest }),
-      headers,
-      method: 'POST',
-      signal: options?.signal,
-    });
-
-    if (!res.ok) {
-      throw await getMessageError(res);
-    }
-
-    const text = await res.text();
-    return { text, traceId: getTraceId(res) };
   };
 
   fetchPresetTaskResult = async ({

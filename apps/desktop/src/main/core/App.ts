@@ -1,21 +1,23 @@
 import os from 'node:os';
-import { join } from 'node:path';
+import path from 'node:path';
 
 import type { ElectronIPCEventHandler } from '@lobechat/electron-server-ipc';
 import { ElectronIPCServer } from '@lobechat/electron-server-ipc';
 import { app, nativeTheme, protocol } from 'electron';
 import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
-import { macOS, windows } from 'electron-is';
+import * as electronIs from 'electron-is';
 
 import { name } from '@/../../package.json';
 import { binDir, buildDir } from '@/const/dir';
 import { isDev } from '@/const/env';
-import { ELECTRON_BE_PROTOCOL_SCHEME } from '@/const/protocol';
 import type { IControlModule } from '@/controllers';
 import AuthCtr from '@/controllers/AuthCtr';
+import { generateCliWrapper, getCliWrapperDir } from '@/modules/cliEmbedding';
+import { ScreenCaptureManager } from '@/modules/screenCapture/ScreenCaptureManager';
 import {
   astSearchDetectors,
   browserAutomationDetectors,
+  cliAgentDetectors,
   contentSearchDetectors,
   fileSearchDetectors,
   type IToolDetector,
@@ -26,8 +28,10 @@ import type { IServiceModule } from '@/services';
 import { createLogger } from '@/utils/logger';
 
 import { BrowserManager } from './browser/BrowserManager';
+import { backendProxyProtocolManager } from './infrastructure/BackendProxyProtocolManager';
 import { I18nManager } from './infrastructure/I18nManager';
 import { IoCContainer } from './infrastructure/IoCContainer';
+import { LocalFileProtocolManager } from './infrastructure/LocalFileProtocolManager';
 import { ProtocolManager } from './infrastructure/ProtocolManager';
 import { RendererUrlManager } from './infrastructure/RendererUrlManager';
 import { StaticFileServerManager } from './infrastructure/StaticFileServerManager';
@@ -59,7 +63,9 @@ export class App {
   staticFileServerManager: StaticFileServerManager;
   protocolManager: ProtocolManager;
   rendererUrlManager: RendererUrlManager;
+  localFileProtocolManager: LocalFileProtocolManager;
   toolDetectorManager: ToolDetectorManager;
+  screenCaptureManager: ScreenCaptureManager;
   chromeFlags: string[] = ['OverlayScrollbar', 'FluentOverlayScrollbar', 'FluentScrollbar'];
 
   /**
@@ -89,27 +95,28 @@ export class App {
     logger.info('----------------------------------------------');
     logger.info('Starting LobeHub...');
 
-    // Append bundled binaries directory to PATH for fallback tool resolution
+    // Append bundled binaries and CLI wrapper directories to PATH for tool resolution
     const pathSep = process.platform === 'win32' ? ';' : ':';
-    process.env.PATH = `${process.env.PATH}${pathSep}${binDir}`;
+    process.env.PATH = `${process.env.PATH}${pathSep}${binDir}${pathSep}${getCliWrapperDir()}`;
 
     logger.debug('Initializing App');
     // Initialize store manager
     this.storeManager = new StoreManager(this);
 
     this.rendererUrlManager = new RendererUrlManager();
+    // Wire the backend reverse-proxy as an `app://` interceptor: keeps
+    // RendererUrlManager ignorant of "what counts as a backend path" while
+    // letting BackendProxyProtocolManager own that knowledge.
+    this.rendererUrlManager.addRequestInterceptor(
+      backendProxyProtocolManager.createAppRequestInterceptor(),
+    );
+    this.localFileProtocolManager = new LocalFileProtocolManager();
+    void this.localFileProtocolManager.approveWorkspaceRoots(
+      this.storeManager.get('localFileWorkspaceRoots', []),
+    );
     protocol.registerSchemesAsPrivileged([
-      {
-        privileges: {
-          allowServiceWorkers: true,
-          corsEnabled: true,
-          secure: true,
-          standard: true,
-          supportFetchAPI: true,
-        },
-        scheme: ELECTRON_BE_PROTOCOL_SCHEME,
-      },
       this.rendererUrlManager.protocolScheme,
+      this.localFileProtocolManager.protocolScheme,
     ]);
 
     // load controllers
@@ -139,6 +146,7 @@ export class App {
     this.staticFileServerManager = new StaticFileServerManager(this);
     this.protocolManager = new ProtocolManager(this);
     this.toolDetectorManager = new ToolDetectorManager(this);
+    this.screenCaptureManager = new ScreenCaptureManager(this);
 
     // Register built-in tool detectors
     this.registerBuiltinToolDetectors();
@@ -146,6 +154,10 @@ export class App {
     // Configure renderer loading strategy (dev server vs static export)
     // should register before app ready
     this.rendererUrlManager.configureRendererLoader();
+
+    // Serves arbitrary local files (e.g. project file previews) via
+    // `localfile://` to the renderer. Active in both dev and prod.
+    this.localFileProtocolManager.registerHandler();
 
     // initialize protocol handlers
     this.protocolManager.initialize();
@@ -189,6 +201,7 @@ export class App {
 
     const detectorCategories: Partial<Record<ToolCategory, IToolDetector[]>> = {
       'runtime-environment': runtimeEnvironmentDetectors,
+      'cli-agents': cliAgentDetectors,
       'ast-search': astSearchDetectors,
       'browser-automation': browserAutomationDetectors,
       'content-search': contentSearchDetectors,
@@ -226,6 +239,11 @@ export class App {
     // Initialize app
     await this.makeAppReady();
 
+    // Generate CLI wrapper for terminal usage
+    generateCliWrapper().catch((error) => {
+      logger.warn('Failed to generate CLI wrapper:', error);
+    });
+
     // Initialize i18n. Note: app.getLocale() must be called after app.whenReady() to get the correct value
     await this.i18n.init();
     this.menuManager.initialize();
@@ -238,10 +256,8 @@ export class App {
 
     await this.browserManager.initializeBrowsers();
 
-    // Initialize tray manager
-    if (process.platform === 'win32') {
-      this.trayManager.initializeTrays();
-    }
+    // Initialize tray manager on all platforms (macOS menu bar, Windows / Linux tray).
+    this.trayManager.initializeTrays();
 
     // Initialize updater manager
     await this.updaterManager.initialize();
@@ -250,7 +266,7 @@ export class App {
     this.isQuiting = false;
 
     app.on('window-all-closed', () => {
-      if (windows() || process.platform === 'linux') {
+      if (electronIs.windows() || process.platform === 'linux') {
         logger.info(`All windows closed, quitting application (${process.platform})`);
         app.quit();
       }
@@ -411,9 +427,8 @@ export class App {
     if (!isDev) return;
 
     logger.debug('Setting up dev branding');
-    app.setName('lobehub-desktop-dev');
-    if (macOS()) {
-      app.dock!.setIcon(join(buildDir, 'icon-dev.png'));
+    if (electronIs.macOS()) {
+      app.dock!.setIcon(path.join(buildDir, 'icon-dev.png'));
     }
   };
 

@@ -1,10 +1,9 @@
 // @vitest-environment node
-import { Type as SchemaType } from '@google/genai';
 import * as imageToBase64Module from '@lobechat/utils';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChatCompletionTool, OpenAIChatMessage, UserMessageContentPart } from '../../types';
-import { parseDataUri } from '../../utils/uriParser';
+import { isPublicExternalUrl, parseDataUri, validateExternalUrl } from '../../utils/uriParser';
 import {
   buildGoogleMessage,
   buildGoogleMessages,
@@ -16,12 +15,16 @@ import {
 
 // Mock the utils
 vi.mock('../../utils/uriParser', () => ({
+  isPublicExternalUrl: vi.fn().mockReturnValue(false),
   parseDataUri: vi.fn(),
+  validateExternalUrl: vi.fn().mockResolvedValue({ isValid: false, reason: 'mocked' }),
 }));
 
 vi.mock('../../utils/imageToBase64', () => ({
   imageUrlToBase64: vi.fn(),
 }));
+
+const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ';
 
 describe('google contextBuilders', () => {
   describe('GEMINI_MAGIC_THOUGHT_SIGNATURE', () => {
@@ -33,6 +36,10 @@ describe('google contextBuilders', () => {
   });
 
   describe('buildGooglePart', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
     it('should handle text type messages', async () => {
       const content: UserMessageContentPart = {
         text: 'Hello',
@@ -83,6 +90,29 @@ describe('google contextBuilders', () => {
       });
     });
 
+    it('should correct base64 image MIME type when declared type does not match bytes', async () => {
+      vi.mocked(parseDataUri).mockReturnValueOnce({
+        base64: PNG_BASE64,
+        mimeType: 'image/jpeg',
+        type: 'base64',
+      });
+
+      const content: UserMessageContentPart = {
+        image_url: { url: `data:image/jpeg;base64,${PNG_BASE64}` },
+        type: 'image_url',
+      };
+
+      const result = await buildGooglePart(content);
+
+      expect(result).toEqual({
+        inlineData: {
+          data: PNG_BASE64,
+          mimeType: 'image/png',
+        },
+        thoughtSignature: GEMINI_MAGIC_THOUGHT_SIGNATURE,
+      });
+    });
+
     it('should handle URL type images', async () => {
       const imageUrl = 'http://example.com/image.png';
       const mockBase64 = 'mockBase64Data';
@@ -114,6 +144,161 @@ describe('google contextBuilders', () => {
       });
 
       expect(imageToBase64Module.imageUrlToBase64).toHaveBeenCalledWith(imageUrl);
+    });
+
+    it('should use fileData for external URL images on gemini-3+', async () => {
+      const imageUrl = 'https://example.com/image.png';
+
+      vi.mocked(parseDataUri).mockReturnValueOnce({
+        base64: null,
+        mimeType: null,
+        type: 'url',
+      });
+
+      vi.mocked(isPublicExternalUrl).mockReturnValueOnce(true);
+      vi.mocked(validateExternalUrl).mockResolvedValueOnce({
+        contentLength: 1024,
+        contentType: 'image/png',
+        isValid: true,
+      });
+
+      const imageToBase64Spy = vi
+        .spyOn(imageToBase64Module, 'imageUrlToBase64')
+        .mockResolvedValueOnce({
+          base64: 'mockBase64Data',
+          mimeType: 'image/png',
+        });
+
+      const content: UserMessageContentPart = {
+        image_url: { url: imageUrl },
+        type: 'image_url',
+      };
+
+      const result = await buildGooglePart(content, { model: 'gemini-3-flash-preview' });
+
+      expect(result).toEqual({
+        fileData: {
+          fileUri: imageUrl,
+          mimeType: 'image/png',
+        },
+        thoughtSignature: GEMINI_MAGIC_THOUGHT_SIGNATURE,
+      });
+
+      expect(imageToBase64Spy).not.toHaveBeenCalled();
+    });
+
+    it('should fallback to inlineData when external URL validation fails for HEIC', async () => {
+      const imageUrl = 'https://example.com/image.heic';
+
+      vi.mocked(parseDataUri).mockReturnValueOnce({
+        base64: null,
+        mimeType: null,
+        type: 'url',
+      });
+
+      vi.mocked(isPublicExternalUrl).mockReturnValueOnce(true);
+      vi.mocked(validateExternalUrl).mockResolvedValueOnce({
+        contentLength: 1024,
+        contentType: 'image/heic',
+        isValid: false,
+        reason: 'Unsupported content type: image/heic',
+      });
+
+      const imageToBase64Spy = vi
+        .spyOn(imageToBase64Module, 'imageUrlToBase64')
+        .mockResolvedValueOnce({
+          base64: 'mockBase64Data',
+          mimeType: 'image/heic',
+        });
+
+      const content: UserMessageContentPart = {
+        image_url: { url: imageUrl },
+        type: 'image_url',
+      };
+
+      const result = await buildGooglePart(content, { model: 'gemini-3-flash-preview' });
+
+      expect(result).toEqual({
+        inlineData: {
+          data: 'mockBase64Data',
+          mimeType: 'image/heic',
+        },
+        thoughtSignature: GEMINI_MAGIC_THOUGHT_SIGNATURE,
+      });
+
+      expect(imageToBase64Spy).toHaveBeenCalledWith(imageUrl);
+    });
+
+    it('should force inlineData for external URL images on gemini-2.5 and earlier', async () => {
+      const imageUrl = 'https://example.com/image.png';
+
+      vi.mocked(parseDataUri).mockReturnValueOnce({
+        base64: null,
+        mimeType: null,
+        type: 'url',
+      });
+
+      const imageToBase64Spy = vi
+        .spyOn(imageToBase64Module, 'imageUrlToBase64')
+        .mockResolvedValueOnce({
+          base64: 'mockBase64Data',
+          mimeType: 'image/png',
+        });
+
+      const content: UserMessageContentPart = {
+        image_url: { url: imageUrl },
+        type: 'image_url',
+      };
+
+      const result = await buildGooglePart(content, { model: 'gemini-2.5-flash' });
+
+      expect(result).toEqual({
+        inlineData: {
+          data: 'mockBase64Data',
+          mimeType: 'image/png',
+        },
+        thoughtSignature: GEMINI_MAGIC_THOUGHT_SIGNATURE,
+      });
+
+      expect(imageToBase64Spy).toHaveBeenCalledWith(imageUrl);
+      expect(isPublicExternalUrl).not.toHaveBeenCalled();
+      expect(validateExternalUrl).not.toHaveBeenCalled();
+    });
+
+    it('should throw when external URL exceeds size limit', async () => {
+      const imageUrl = 'https://example.com/large-image.png';
+
+      vi.mocked(parseDataUri).mockReturnValueOnce({
+        base64: null,
+        mimeType: 'image/png',
+        type: 'url',
+      });
+
+      vi.mocked(isPublicExternalUrl).mockReturnValueOnce(true);
+      vi.mocked(validateExternalUrl).mockResolvedValueOnce({
+        contentLength: 120 * 1024 * 1024,
+        contentType: 'image/png',
+        isTooLarge: true,
+        isValid: false,
+        reason: 'File too large: 120MB',
+      });
+
+      const imageToBase64Spy = vi
+        .spyOn(imageToBase64Module, 'imageUrlToBase64')
+        .mockResolvedValueOnce({
+          base64: 'mockBase64Data',
+          mimeType: 'image/png',
+        });
+
+      const content: UserMessageContentPart = {
+        image_url: { url: imageUrl },
+        type: 'image_url',
+      };
+
+      await expect(buildGooglePart(content, { model: 'gemini-3-flash' })).rejects.toThrow(
+        RangeError,
+      );
+      expect(imageToBase64Spy).not.toHaveBeenCalled();
     });
 
     it('should throw TypeError for unsupported image URL types', async () => {
@@ -156,6 +341,134 @@ describe('google contextBuilders', () => {
         },
         thoughtSignature: GEMINI_MAGIC_THOUGHT_SIGNATURE,
       });
+    });
+
+    it('should use fileData for external URL videos on gemini-3+', async () => {
+      const videoUrl = 'https://example.com/video.mp4';
+
+      vi.mocked(parseDataUri).mockReturnValueOnce({
+        base64: null,
+        mimeType: null,
+        type: 'url',
+      });
+
+      vi.mocked(isPublicExternalUrl).mockReturnValueOnce(true);
+      vi.mocked(validateExternalUrl).mockResolvedValueOnce({
+        contentLength: 1024,
+        contentType: 'video/mp4',
+        isValid: true,
+      });
+
+      const imageToBase64Spy = vi
+        .spyOn(imageToBase64Module, 'imageUrlToBase64')
+        .mockResolvedValueOnce({
+          base64: 'mockVideoBase64Data',
+          mimeType: 'video/mp4',
+        });
+
+      const content: UserMessageContentPart = {
+        type: 'video_url',
+        video_url: { url: videoUrl },
+      };
+
+      const result = await buildGooglePart(content, { model: 'gemini-3-flash-preview' });
+
+      expect(result).toEqual({
+        fileData: {
+          fileUri: videoUrl,
+          mimeType: 'video/mp4',
+        },
+        thoughtSignature: GEMINI_MAGIC_THOUGHT_SIGNATURE,
+      });
+      expect(imageToBase64Spy).not.toHaveBeenCalled();
+    });
+
+    it('should handle base64 audio', async () => {
+      const base64Audio = 'data:audio/mp3;base64,mockAudioBase64Data';
+
+      vi.mocked(parseDataUri).mockReturnValueOnce({
+        base64: 'mockAudioBase64Data',
+        mimeType: 'audio/mp3',
+        type: 'base64',
+      });
+
+      const content: UserMessageContentPart = {
+        audio_url: { url: base64Audio },
+        type: 'audio_url',
+      };
+
+      const result = await buildGooglePart(content);
+
+      expect(result).toEqual({
+        inlineData: {
+          data: 'mockAudioBase64Data',
+          mimeType: 'audio/mp3',
+        },
+        thoughtSignature: GEMINI_MAGIC_THOUGHT_SIGNATURE,
+      });
+    });
+
+    it('should default mimeType to audio/mp3 when base64 audio has no mime', async () => {
+      vi.mocked(parseDataUri).mockReturnValueOnce({
+        base64: 'mockAudioBase64Data',
+        mimeType: null,
+        type: 'base64',
+      });
+
+      const content: UserMessageContentPart = {
+        audio_url: { url: 'data:;base64,mockAudioBase64Data' },
+        type: 'audio_url',
+      };
+
+      const result = await buildGooglePart(content);
+
+      expect(result).toEqual({
+        inlineData: {
+          data: 'mockAudioBase64Data',
+          mimeType: 'audio/mp3',
+        },
+        thoughtSignature: GEMINI_MAGIC_THOUGHT_SIGNATURE,
+      });
+    });
+
+    it('should use fileData for external URL audio on gemini-3+', async () => {
+      const audioUrl = 'https://example.com/audio.mp3';
+
+      vi.mocked(parseDataUri).mockReturnValueOnce({
+        base64: null,
+        mimeType: null,
+        type: 'url',
+      });
+
+      vi.mocked(isPublicExternalUrl).mockReturnValueOnce(true);
+      vi.mocked(validateExternalUrl).mockResolvedValueOnce({
+        contentLength: 1024,
+        contentType: 'audio/mpeg',
+        isValid: true,
+      });
+
+      const imageToBase64Spy = vi
+        .spyOn(imageToBase64Module, 'imageUrlToBase64')
+        .mockResolvedValueOnce({
+          base64: 'mockAudioBase64Data',
+          mimeType: 'audio/mpeg',
+        });
+
+      const content: UserMessageContentPart = {
+        audio_url: { url: audioUrl },
+        type: 'audio_url',
+      };
+
+      const result = await buildGooglePart(content, { model: 'gemini-3-flash-preview' });
+
+      expect(result).toEqual({
+        fileData: {
+          fileUri: audioUrl,
+          mimeType: 'audio/mpeg',
+        },
+        thoughtSignature: GEMINI_MAGIC_THOUGHT_SIGNATURE,
+      });
+      expect(imageToBase64Spy).not.toHaveBeenCalled();
     });
 
     it('should return undefined for unsupported SVG image (base64)', async () => {
@@ -289,6 +602,44 @@ describe('google contextBuilders', () => {
       });
     });
 
+    it('recovers functionCall.args from element[0] when arguments parse to an array', async () => {
+      // — same defense as Anthropic: prefer partial recovery from
+      // element[0] over total loss when malformed JSON parses to an array.
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const message = {
+        role: 'assistant',
+        tool_calls: [
+          {
+            function: {
+              arguments: '[{"content":"a"},{"content":"b"}]',
+              name: 'writeLocalFile',
+            },
+            id: 'call_array',
+            type: 'function',
+          },
+        ],
+      } as OpenAIChatMessage;
+
+      const converted = await buildGoogleMessage(message);
+
+      expect(converted).toEqual({
+        parts: [
+          {
+            functionCall: { args: { content: 'a' }, name: 'writeLocalFile' },
+          },
+        ],
+        role: 'model',
+      });
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('functionCall.args recovered from array'),
+        expect.objectContaining({
+          arrayLength: 2,
+          name: 'writeLocalFile',
+        }),
+      );
+      consoleWarnSpy.mockRestore();
+    });
+
     it('should correctly convert function call message with thoughtSignature', async () => {
       const message = {
         role: 'assistant',
@@ -351,7 +702,7 @@ describe('google contextBuilders', () => {
               {
                 function: {
                   arguments: '{"query":"杭州天气","searchEngines":["google"]}',
-                  name: 'lobe-web-browsing____search____builtin',
+                  name: 'lobe-web-browsing____search',
                 },
                 id: 'call_001',
                 type: 'function',
@@ -360,7 +711,7 @@ describe('google contextBuilders', () => {
           },
           {
             content: 'Tool execution was aborted by user.',
-            name: 'lobe-web-browsing____search____builtin',
+            name: 'lobe-web-browsing____search',
             role: 'tool',
             tool_call_id: 'call_001',
           },
@@ -371,7 +722,7 @@ describe('google contextBuilders', () => {
               {
                 function: {
                   arguments: '{"query":"杭州 天气","searchEngines":["bing"]}',
-                  name: 'lobe-web-browsing____search____builtin',
+                  name: 'lobe-web-browsing____search',
                 },
                 id: 'call_002',
                 type: 'function',
@@ -380,7 +731,7 @@ describe('google contextBuilders', () => {
           },
           {
             content: 'no result',
-            name: 'lobe-web-browsing____search____builtin',
+            name: 'lobe-web-browsing____search',
             role: 'tool',
             tool_call_id: 'call_002',
           },
@@ -407,7 +758,7 @@ describe('google contextBuilders', () => {
               {
                 functionCall: {
                   args: { query: '杭州天气', searchEngines: ['google'] },
-                  name: 'lobe-web-browsing____search____builtin',
+                  name: 'lobe-web-browsing____search',
                 },
                 thoughtSignature: GEMINI_MAGIC_THOUGHT_SIGNATURE,
               },
@@ -418,7 +769,7 @@ describe('google contextBuilders', () => {
             parts: [
               {
                 functionResponse: {
-                  name: 'lobe-web-browsing____search____builtin',
+                  name: 'lobe-web-browsing____search',
                   response: { result: 'Tool execution was aborted by user.' },
                 },
               },
@@ -430,7 +781,7 @@ describe('google contextBuilders', () => {
               {
                 functionCall: {
                   args: { query: '杭州 天气', searchEngines: ['bing'] },
-                  name: 'lobe-web-browsing____search____builtin',
+                  name: 'lobe-web-browsing____search',
                 },
                 thoughtSignature: GEMINI_MAGIC_THOUGHT_SIGNATURE,
               },
@@ -441,7 +792,7 @@ describe('google contextBuilders', () => {
             parts: [
               {
                 functionResponse: {
-                  name: 'lobe-web-browsing____search____builtin',
+                  name: 'lobe-web-browsing____search',
                   response: { result: 'no result' },
                 },
               },
@@ -465,7 +816,7 @@ describe('google contextBuilders', () => {
               {
                 function: {
                   arguments: '{"query":"杭州天气","searchEngines":["google"]}',
-                  name: 'lobe-web-browsing____search____builtin',
+                  name: 'lobe-web-browsing____search',
                 },
                 id: 'call_001',
                 thoughtSignature: existingSignature,
@@ -475,7 +826,7 @@ describe('google contextBuilders', () => {
           },
           {
             content: 'Tool result',
-            name: 'lobe-web-browsing____search____builtin',
+            name: 'lobe-web-browsing____search',
             role: 'tool',
             tool_call_id: 'call_001',
           },
@@ -493,7 +844,7 @@ describe('google contextBuilders', () => {
               {
                 functionCall: {
                   args: { query: '杭州天气', searchEngines: ['google'] },
-                  name: 'lobe-web-browsing____search____builtin',
+                  name: 'lobe-web-browsing____search',
                 },
                 // Should keep existing thoughtSignature, not add magic signature
                 thoughtSignature: existingSignature,
@@ -505,7 +856,7 @@ describe('google contextBuilders', () => {
             parts: [
               {
                 functionResponse: {
-                  name: 'lobe-web-browsing____search____builtin',
+                  name: 'lobe-web-browsing____search',
                   response: { result: 'Tool result' },
                 },
               },
@@ -515,7 +866,7 @@ describe('google contextBuilders', () => {
         ]);
       });
 
-      it('should add magic signature only after last user message in multi-turn scenario', async () => {
+      it('should add magic signature to all function calls in multi-turn scenario', async () => {
         const messages: OpenAIChatMessage[] = [
           {
             content: 'First question',
@@ -581,7 +932,8 @@ describe('google contextBuilders', () => {
                   args: { query: 'first' },
                   name: 'search',
                 },
-                // No magic signature for this one (before last user message)
+                // Magic signature added to all function calls (cross-provider scenario)
+                thoughtSignature: GEMINI_MAGIC_THOUGHT_SIGNATURE,
               },
             ],
             role: 'model',
@@ -608,7 +960,6 @@ describe('google contextBuilders', () => {
                   args: { query: 'second' },
                   name: 'search',
                 },
-                // Magic signature added (after last user message)
                 thoughtSignature: GEMINI_MAGIC_THOUGHT_SIGNATURE,
               },
             ],
@@ -628,7 +979,7 @@ describe('google contextBuilders', () => {
         ]);
       });
 
-      it('should NOT add magic signature when last message is user text message', async () => {
+      it('should add magic signature when last message is user text (cross-provider scenario)', async () => {
         const messages: OpenAIChatMessage[] = [
           {
             content: '<plugins>Web Browsing plugin available</plugins>',
@@ -645,7 +996,7 @@ describe('google contextBuilders', () => {
               {
                 function: {
                   arguments: '{"query":"杭州天气","searchEngines":["google"]}',
-                  name: 'lobe-web-browsing____search____builtin',
+                  name: 'lobe-web-browsing____search',
                 },
                 id: 'call_001',
                 type: 'function',
@@ -654,7 +1005,7 @@ describe('google contextBuilders', () => {
           },
           {
             content: 'Tool execution was aborted by user.',
-            name: 'lobe-web-browsing____search____builtin',
+            name: 'lobe-web-browsing____search',
             role: 'tool',
             tool_call_id: 'call_001',
           },
@@ -685,9 +1036,11 @@ describe('google contextBuilders', () => {
               {
                 functionCall: {
                   args: { query: '杭州天气', searchEngines: ['google'] },
-                  name: 'lobe-web-browsing____search____builtin',
+                  name: 'lobe-web-browsing____search',
                 },
-                // No thoughtSignature should be added when last message is user text
+                // Magic signature added even when last message is user text
+                // (cross-provider scenario: OpenAI → Gemini switch)
+                thoughtSignature: GEMINI_MAGIC_THOUGHT_SIGNATURE,
               },
             ],
             role: 'model',
@@ -696,7 +1049,7 @@ describe('google contextBuilders', () => {
             parts: [
               {
                 functionResponse: {
-                  name: 'lobe-web-browsing____search____builtin',
+                  name: 'lobe-web-browsing____search',
                   response: { result: 'Tool execution was aborted by user.' },
                 },
               },
@@ -1081,7 +1434,7 @@ describe('google contextBuilders', () => {
   });
 
   describe('buildGoogleTool', () => {
-    it('should correctly convert ChatCompletionTool to FunctionDeclaration', () => {
+    it('should use parametersJsonSchema to pass standard JSON Schema directly', () => {
       const tool: ChatCompletionTool = {
         function: {
           description: 'A test tool',
@@ -1103,19 +1456,20 @@ describe('google contextBuilders', () => {
       expect(result).toEqual({
         description: 'A test tool',
         name: 'testTool',
-        parameters: {
-          description: undefined,
+        parametersJsonSchema: {
           properties: {
             param1: { type: 'string' },
             param2: { type: 'number' },
           },
           required: ['param1'],
-          type: SchemaType.OBJECT,
+          type: 'object',
         },
       });
+      // Should not have the old parameters field
+      expect(result.parameters).toBeUndefined();
     });
 
-    it('should handle tools with empty parameters', () => {
+    it('should handle tools with empty parameters using dummy property', () => {
       const tool: ChatCompletionTool = {
         function: {
           description: 'A simple function with no parameters',
@@ -1130,28 +1484,31 @@ describe('google contextBuilders', () => {
 
       const result = buildGoogleTool(tool);
 
-      // Should use dummy property for empty parameters
       expect(result).toEqual({
         description: 'A simple function with no parameters',
         name: 'simple_function',
-        parameters: {
-          description: undefined,
-          properties: { dummy: { type: 'string' } },
-          required: undefined,
-          type: SchemaType.OBJECT,
-        },
+        parametersJsonSchema: { type: 'object', properties: { dummy: { type: 'string' } } },
       });
     });
 
-    it('should preserve parameter description', () => {
+    it('should pass through $ref without needing to resolve', () => {
       const tool: ChatCompletionTool = {
         function: {
-          description: 'A test tool',
-          name: 'testTool',
+          description: 'A tool with $ref',
+          name: 'refTool',
           parameters: {
-            description: 'Test parameters',
+            definitions: {
+              timeIntent: {
+                properties: {
+                  selector: { enum: ['today', 'yesterday', 'month'], type: 'string' },
+                },
+                required: ['selector'],
+                type: 'object',
+              },
+            },
             properties: {
-              param1: { type: 'string' },
+              query: { type: 'string' },
+              timeIntent: { $ref: '#/definitions/timeIntent' },
             },
             type: 'object',
           },
@@ -1161,23 +1518,87 @@ describe('google contextBuilders', () => {
 
       const result = buildGoogleTool(tool);
 
-      expect(result.parameters?.description).toBe('Test parameters');
+      // $ref should be passed through as-is via parametersJsonSchema
+      expect(result.parametersJsonSchema).toEqual(tool.function.parameters);
     });
 
-    it('should convert const to enum for Google compatibility', () => {
+    it('should keep nullable type but strip null/empty members from enum (Gemini proto)', () => {
       const tool: ChatCompletionTool = {
         function: {
-          description: 'A tool with const values',
+          description: 'A tool with nullable enum',
+          name: 'nullableTool',
+          parameters: {
+            properties: {
+              status: {
+                enum: ['active', 'inactive', null, ''],
+                type: ['string', 'null'],
+              },
+            },
+            type: 'object',
+          },
+        },
+        type: 'function',
+      };
+
+      const result = buildGoogleTool(tool);
+
+      // Gemini proto only accepts non-empty STRING enum members; null/'' get coerced
+      // to '' and rejected with "enum[i]: cannot be empty", so they must be filtered.
+      // The nullable `type` is preserved to keep the field optional.
+      expect(result.parametersJsonSchema).toEqual({
+        properties: {
+          status: {
+            enum: ['active', 'inactive'],
+            type: ['string', 'null'],
+          },
+        },
+        type: 'object',
+      });
+    });
+
+    // Regression: the memory tool's `memoryType` enum carried a trailing `null` sentinel
+    // trailing `null` sentinel (`[...MEMORY_TYPES, null]`), which Gemini rejected
+    // with `enum[10]: cannot be empty`. The sanitizer must drop the null member.
+    it('should strip the null sentinel from a memory-style nullable enum', () => {
+      const memoryTypes = ['fact', 'event', 'people', 'preference'];
+      const tool: ChatCompletionTool = {
+        function: {
+          description: 'updateIdentityMemory-style tool',
+          name: 'updateIdentityMemory',
+          parameters: {
+            properties: {
+              set: {
+                properties: {
+                  memoryType: {
+                    description: 'Memory type, use null for omitting the field',
+                    enum: [...memoryTypes, null],
+                    type: ['string', 'null'],
+                  },
+                },
+                type: 'object',
+              },
+            },
+            type: 'object',
+          },
+        },
+        type: 'function',
+      };
+
+      const result = buildGoogleTool(tool) as any;
+
+      expect(result.parametersJsonSchema.properties.set.properties.memoryType.enum).toEqual(
+        memoryTypes,
+      );
+    });
+
+    it('should pass through const values without conversion', () => {
+      const tool: ChatCompletionTool = {
+        function: {
+          description: 'A tool with const',
           name: 'constTool',
           parameters: {
             properties: {
               action: { const: 'insert', type: 'string' },
-              nested: {
-                properties: {
-                  operation: { const: 'create', type: 'string' },
-                },
-                type: 'object',
-              },
             },
             type: 'object',
           },
@@ -1187,188 +1608,8 @@ describe('google contextBuilders', () => {
 
       const result = buildGoogleTool(tool);
 
-      // const should be converted to enum with single value
-      expect(result.parameters?.properties).toEqual({
-        action: { enum: ['insert'], type: 'string' },
-        nested: {
-          properties: {
-            operation: { enum: ['create'], type: 'string' },
-          },
-          type: 'object',
-        },
-      });
-    });
-
-    it('should handle oneOf with const values (like page-agent modifyNodes)', () => {
-      const tool: ChatCompletionTool = {
-        function: {
-          description: 'Modify nodes operation',
-          name: 'modifyNodes',
-          parameters: {
-            properties: {
-              operations: {
-                items: {
-                  oneOf: [
-                    {
-                      properties: {
-                        action: { const: 'insert', type: 'string' },
-                        beforeId: { type: 'string' },
-                      },
-                      type: 'object',
-                    },
-                    {
-                      properties: {
-                        action: { const: 'modify', type: 'string' },
-                        content: { type: 'string' },
-                      },
-                      type: 'object',
-                    },
-                  ],
-                },
-                type: 'array',
-              },
-            },
-            type: 'object',
-          },
-        },
-        type: 'function',
-      };
-
-      const result = buildGoogleTool(tool);
-
-      // All const values in nested oneOf should be converted to enum
-      const operations = result.parameters?.properties?.operations as any;
-      expect(operations.items.oneOf[0].properties.action).toEqual({
-        enum: ['insert'],
-        type: 'string',
-      });
-      expect(operations.items.oneOf[1].properties.action).toEqual({
-        enum: ['modify'],
-        type: 'string',
-      });
-    });
-
-    it('should filter null values from enum arrays for Google compatibility', () => {
-      const tool: ChatCompletionTool = {
-        function: {
-          description: 'A tool with enum containing null',
-          name: 'enumTool',
-          parameters: {
-            properties: {
-              memoryType: {
-                enum: ['short_term', 'long_term', null, 'working'],
-                type: 'string',
-              },
-              nested: {
-                properties: {
-                  status: {
-                    enum: [null, 'active', 'inactive', null],
-                    type: 'string',
-                  },
-                },
-                type: 'object',
-              },
-            },
-            type: 'object',
-          },
-        },
-        type: 'function',
-      };
-
-      const result = buildGoogleTool(tool);
-
-      // null values should be filtered from enum arrays
-      expect(result.parameters?.properties).toEqual({
-        memoryType: {
-          enum: ['short_term', 'long_term', 'working'],
-          type: 'string',
-        },
-        nested: {
-          properties: {
-            status: {
-              enum: ['active', 'inactive'],
-              type: 'string',
-            },
-          },
-          type: 'object',
-        },
-      });
-    });
-
-    it('should handle enum with only null values', () => {
-      const tool: ChatCompletionTool = {
-        function: {
-          description: 'A tool with enum containing only null',
-          name: 'nullEnumTool',
-          parameters: {
-            properties: {
-              value: {
-                enum: [null],
-                type: 'string',
-              },
-            },
-            type: 'object',
-          },
-        },
-        type: 'function',
-      };
-
-      const result = buildGoogleTool(tool);
-
-      // When enum only contains null, the enum property should be removed
-      expect(result.parameters?.properties?.value).toEqual({
-        type: 'string',
-      });
-    });
-
-    it('should strip unsupported JSON Schema keywords like examples and default', () => {
-      const tool: ChatCompletionTool = {
-        function: {
-          description: 'A tool with unsupported schema keywords',
-          name: 'mcp_tool',
-          parameters: {
-            properties: {
-              query: {
-                default: 'hello',
-                description: 'Search query',
-                examples: ['weather in London', 'latest news'],
-                type: 'string',
-              },
-              nested: {
-                properties: {
-                  format: {
-                    $comment: 'internal note',
-                    examples: ['json', 'xml'],
-                    type: 'string',
-                  },
-                },
-                type: 'object',
-              },
-            },
-            type: 'object',
-          },
-        },
-        type: 'function',
-      };
-
-      const result = buildGoogleTool(tool);
-
-      // examples, default should be stripped; $comment is silently ignored by the API
-      expect(result.parameters?.properties).toEqual({
-        query: {
-          description: 'Search query',
-          type: 'string',
-        },
-        nested: {
-          properties: {
-            format: {
-              $comment: 'internal note',
-              type: 'string',
-            },
-          },
-          type: 'object',
-        },
-      });
+      // const should be passed through as-is
+      expect(result.parametersJsonSchema).toEqual(tool.function.parameters);
     });
   });
 
@@ -1404,14 +1645,13 @@ describe('google contextBuilders', () => {
       expect(googleTools![0].functionDeclarations![0]).toEqual({
         description: 'A test tool',
         name: 'testTool',
-        parameters: {
-          description: undefined,
+        parametersJsonSchema: {
           properties: {
             param1: { type: 'string' },
             param2: { type: 'number' },
           },
           required: ['param1'],
-          type: SchemaType.OBJECT,
+          type: 'object',
         },
       });
     });
@@ -1462,7 +1702,7 @@ describe('google contextBuilders', () => {
         {
           function: {
             description: 'Search the web',
-            name: 'lobe-web-browsing____search____builtin',
+            name: 'lobe-web-browsing____search',
             parameters: {
               properties: { query: { type: 'string' } },
               required: ['query'],
@@ -1486,7 +1726,7 @@ describe('google contextBuilders', () => {
         {
           function: {
             description: 'Search the web (duplicate)',
-            name: 'lobe-web-browsing____search____builtin',
+            name: 'lobe-web-browsing____search',
             parameters: {
               properties: { query: { type: 'string' } },
               required: ['query'],
@@ -1501,9 +1741,7 @@ describe('google contextBuilders', () => {
 
       expect(googleTools).toHaveLength(1);
       expect(googleTools![0].functionDeclarations).toHaveLength(2);
-      expect(googleTools![0].functionDeclarations![0].name).toBe(
-        'lobe-web-browsing____search____builtin',
-      );
+      expect(googleTools![0].functionDeclarations![0].name).toBe('lobe-web-browsing____search');
       expect(googleTools![0].functionDeclarations![0].description).toBe('Search the web');
       expect(googleTools![0].functionDeclarations![1].name).toBe('get_weather');
     });

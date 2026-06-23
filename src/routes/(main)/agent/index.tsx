@@ -3,27 +3,21 @@
 import { Flexbox } from '@lobehub/ui';
 import { memo } from 'react';
 
-import MainInterfaceTracker from '@/components/Analytics/MainInterfaceTracker';
-
 import Conversation from './features/Conversation';
-import PageTitle from './features/PageTitle';
-import Portal from './features/Portal';
+import ChatHydration from './features/Conversation/ChatHydration';
 import TelemetryNotification from './features/TelemetryNotification';
 
 const ChatPage = memo(() => {
   return (
     <>
-      <PageTitle />
+      <ChatHydration />
       <Flexbox
-        horizontal
         height={'100%'}
-        style={{ overflow: 'hidden', position: 'relative' }}
+        style={{ minHeight: 0, overflow: 'hidden', position: 'relative' }}
         width={'100%'}
       >
         <Conversation />
-        <Portal />
       </Flexbox>
-      <MainInterfaceTracker />
       <TelemetryNotification mobile={false} />
     </>
   );

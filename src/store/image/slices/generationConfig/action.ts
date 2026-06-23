@@ -14,6 +14,10 @@ import { useUserStore } from '@/store/user';
 import { authSelectors } from '@/store/user/selectors';
 import { settingsSelectors } from '@/store/user/slices/settings/selectors';
 
+import {
+  normalizeImageInputOnSchemaSwitch,
+  preserveSupportedParams,
+} from '../../../utils/preserveSupportedParams';
 import { type ImageStore } from '../../store';
 import { calculateInitialAspectRatio } from '../../utils/aspectRatio';
 import { adaptSizeToRatio, parseRatio } from '../../utils/size';
@@ -62,6 +66,37 @@ function prepareModelConfigState(model: string, provider: string) {
     parametersSchema,
     initialActiveRatio,
   };
+}
+
+function preserveImageInputParams(
+  previousParameters: RuntimeImageGenParams,
+  nextDefaultValues: RuntimeImageGenParams,
+  nextSchema: ModelParamsSchema,
+) {
+  const result = preserveSupportedParams(previousParameters, nextDefaultValues, nextSchema, [
+    'prompt',
+    'imageUrl',
+    'imageUrls',
+  ]);
+
+  return normalizeImageInputOnSchemaSwitch(previousParameters, nextSchema, result);
+}
+
+function preserveReusableSettings(
+  settings: Partial<RuntimeImageGenParams>,
+  nextDefaultValues: RuntimeImageGenParams,
+  nextSchema: ModelParamsSchema,
+) {
+  const reusableSettings = settings as RuntimeImageGenParams;
+  const supportedParamKeys = Object.keys(nextSchema) as RuntimeImageGenParamsKeys[];
+  const result = preserveSupportedParams(
+    reusableSettings,
+    nextDefaultValues,
+    nextSchema,
+    supportedParamKeys,
+  );
+
+  return normalizeImageInputOnSchemaSwitch(reusableSettings, nextSchema, result);
 }
 
 type Setter = StoreSetter<ImageStore>;
@@ -236,6 +271,12 @@ export class GenerationConfigActionImpl {
       newParams.aspectRatio = aspectRatio;
     }
 
+    // Preserve resolution if it exists in current parameters (models like nanoBanana2 use resolution enum)
+    // This ensures 4K/2K resolution is maintained when changing aspect ratios
+    if ('resolution' in parameters && parameters.resolution !== undefined) {
+      newParams.resolution = parameters.resolution;
+    }
+
     this.#set(
       { activeAspectRatio: aspectRatio, parameters: newParams },
       false,
@@ -244,16 +285,23 @@ export class GenerationConfigActionImpl {
   };
 
   setModelAndProviderOnSelect = (model: string, provider: string): void => {
+    const previousParameters = this.#get().parameters;
     const { defaultValues, parametersSchema, initialActiveRatio } = prepareModelConfigState(
       model,
       provider,
+    );
+
+    const parameters = preserveImageInputParams(
+      previousParameters,
+      defaultValues,
+      parametersSchema,
     );
 
     this.#set(
       {
         model,
         provider,
-        parameters: defaultValues,
+        parameters,
         parametersSchema,
         isAspectRatioLocked: false,
         activeAspectRatio: initialActiveRatio,
@@ -282,11 +330,13 @@ export class GenerationConfigActionImpl {
     settings: Partial<RuntimeImageGenParams>,
   ): void => {
     const { defaultValues, parametersSchema } = getModelAndDefaults(model, provider);
+    const parameters = preserveReusableSettings(settings, defaultValues, parametersSchema);
+
     this.#set(
       () => ({
         model,
         provider,
-        parameters: { ...defaultValues, ...settings },
+        parameters,
         parametersSchema,
       }),
       false,

@@ -1,9 +1,9 @@
 'use client';
 
-import { SiGithub, SiX } from '@icons-pack/react-simple-icons';
-import { Center, Flexbox, Icon, Input, Modal, Text, TextArea, Tooltip } from '@lobehub/ui';
+import { Center, Flexbox, Icon, Input, Text, TextArea, Tooltip } from '@lobehub/ui';
+import { confirmModal, Modal } from '@lobehub/ui/base-ui';
 import { type UploadProps } from 'antd';
-import { App, Form, Modal as AntModal, Upload } from 'antd';
+import { App, Form, Upload } from 'antd';
 import { cssVar } from 'antd-style';
 import { CircleHelp, Globe, ImagePlus, Trash2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
@@ -19,7 +19,9 @@ import { serverConfigSelectors } from '@/store/serverConfig/selectors';
 import { useUserStore } from '@/store/user';
 import { userProfileSelectors } from '@/store/user/selectors';
 
+import SocialConnectButton from './SocialConnectButton';
 import { type MarketUserProfile } from './types';
+import useSocialConnect, { type ClaimableResources } from './useSocialConnect';
 
 const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB limit
 
@@ -35,6 +37,10 @@ interface ProfileSetupModalProps {
   isFirstTimeSetup?: boolean;
   onClose: () => void;
   /**
+   * Callback to show claim resources modal (managed by parent)
+   */
+  onShowClaimResources?: (resources: ClaimableResources) => void;
+  /**
    * Callback when profile is successfully updated
    */
   onSuccess?: (profile: MarketUserProfile) => void;
@@ -48,8 +54,6 @@ interface ProfileSetupModalProps {
 interface FormValues {
   description?: string;
   displayName: string;
-  github?: string;
-  twitter?: string;
   userName: string;
   website?: string;
 }
@@ -58,6 +62,7 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
   ({
     open,
     onClose,
+    onShowClaimResources,
     onSuccess,
     accessToken,
     defaultDisplayName,
@@ -86,8 +91,44 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
     const [bannerUrl, setBannerUrl] = useState<string | null>(null);
     const [bannerUploading, setBannerUploading] = useState(false);
 
+    // Social profiles loading state
+    const [isLoadingSocialProfiles, setIsLoadingSocialProfiles] = useState(false);
+
     // File upload
     const uploadWithProgress = useFileStore((s) => s.uploadWithProgress);
+
+    // Social connect hooks
+    const handleClaimableResourcesFound = useCallback(
+      (resources: ClaimableResources) => {
+        onShowClaimResources?.(resources);
+      },
+      [onShowClaimResources],
+    );
+
+    const githubConnect = useSocialConnect({
+      onClaimableResourcesFound: handleClaimableResourcesFound,
+      provider: 'github',
+    });
+
+    const twitterConnect = useSocialConnect({
+      onClaimableResourcesFound: handleClaimableResourcesFound,
+      provider: 'twitter',
+    });
+
+    // Fetch social profiles when modal opens
+    useEffect(() => {
+      if (open && !isFirstTimeSetup) {
+        const fetchProfiles = async () => {
+          setIsLoadingSocialProfiles(true);
+          try {
+            await Promise.all([githubConnect.fetchProfile(), twitterConnect.fetchProfile()]);
+          } finally {
+            setIsLoadingSocialProfiles(false);
+          }
+        };
+        fetchProfiles();
+      }
+    }, [open, isFirstTimeSetup, githubConnect.fetchProfile, twitterConnect.fetchProfile]);
 
     // Reset form when modal opens
     useEffect(() => {
@@ -104,8 +145,6 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
         form.setFieldsValue({
           description: userProfile?.description || '',
           displayName: existingDisplayName,
-          github: userProfile?.socialLinks?.github || '',
-          twitter: userProfile?.socialLinks?.twitter || '',
           userName: existingUserName || generatedUserName,
           website: userProfile?.socialLinks?.website || '',
         });
@@ -196,10 +235,10 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
         const values = await form.validateFields();
         setLoading(true);
 
-        // Build socialLinks object (only include non-empty values)
+        // Build socialLinks from OAuth profiles and website input
         const socialLinks: { github?: string; twitter?: string; website?: string } = {};
-        if (values.github) socialLinks.github = values.github;
-        if (values.twitter) socialLinks.twitter = values.twitter;
+        if (githubConnect.profile?.username) socialLinks.github = githubConnect.profile.username;
+        if (twitterConnect.profile?.username) socialLinks.twitter = twitterConnect.profile.username;
         if (values.website) socialLinks.website = values.website;
 
         // Build meta object (socialLinks should be inside meta)
@@ -233,6 +272,25 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
           type: result.user?.type || null,
           userName: values.userName || null,
         };
+
+        // Check for claimable resources after saving (if GitHub is connected)
+        if (githubConnect.profile) {
+          try {
+            const claimResult =
+              await lambdaClient.market.socialProfile.scanClaimableResources.query();
+            if (claimResult.plugins.length > 0 || claimResult.skills.length > 0) {
+              // Close profile modal first, then show claim modal via parent callback
+              onSuccess?.(userProfile);
+              onClose();
+              // Trigger claim modal in parent (MarketAuthProvider)
+              onShowClaimResources?.(claimResult);
+              return;
+            }
+          } catch (err) {
+            console.error('[ProfileSetupModal] Failed to scan claimable resources:', err);
+          }
+        }
+
         onSuccess?.(userProfile);
         onClose();
       } catch (error) {
@@ -258,8 +316,11 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
       bannerUrl,
       enableMarketTrustedClient,
       form,
+      githubConnect.profile,
+      twitterConnect.profile,
       message,
       onClose,
+      onShowClaimResources,
       onSuccess,
       t,
     ]);
@@ -271,7 +332,7 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
 
         // If userName changed and it's not first-time setup, show confirmation
         if (!isFirstTimeSetup && oldUserName && values.userName !== oldUserName) {
-          AntModal.confirm({
+          confirmModal({
             cancelText: t('profileSetup.confirmChangeUserId.cancel'),
             content: t('profileSetup.confirmChangeUserId.description', {
               newId: values.userName,
@@ -308,20 +369,22 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
         maskClosable={!isFirstTimeSetup}
         okText={isFirstTimeSetup ? t('profileSetup.getStarted') : t('profileSetup.save')}
         open={open}
-        title={false}
         width={640}
+        title={
+          <Flexbox gap={4}>
+            <Text strong fontSize={16} lineHeight={1.4}>
+              {isFirstTimeSetup ? t('profileSetup.titleFirstTime') : t('profileSetup.titleEdit')}
+            </Text>
+            <Text fontSize={13} lineHeight={1.4} type="secondary">
+              {isFirstTimeSetup
+                ? t('profileSetup.descriptionFirstTime')
+                : t('profileSetup.descriptionEdit')}
+            </Text>
+          </Flexbox>
+        }
         onCancel={handleCancel}
         onOk={handleSubmit}
       >
-        <Text strong fontSize={20} style={{ marginTop: 16 }}>
-          {isFirstTimeSetup ? t('profileSetup.titleFirstTime') : t('profileSetup.titleEdit')}
-        </Text>
-        <Text style={{ display: 'block', marginBottom: 24 }} type="secondary">
-          {isFirstTimeSetup
-            ? t('profileSetup.descriptionFirstTime')
-            : t('profileSetup.descriptionEdit')}
-        </Text>
-
         <Form form={form} layout="vertical">
           <Flexbox horizontal gap={24}>
             <Flexbox flex={1}>
@@ -509,28 +572,31 @@ const ProfileSetupModal = memo<ProfileSetupModalProps>(
                 {t('profileSetup.socialLinks.title')}
               </Text>
 
-              <Form.Item name="github">
-                <Input
-                  placeholder={t('profileSetup.fields.github.placeholder')}
-                  prefix={
-                    <Icon
-                      fill={cssVar.colorTextSecondary}
-                      icon={SiGithub}
-                      style={{ marginRight: 8 }}
-                    />
-                  }
+              {/* GitHub OAuth Connect Button */}
+              <Flexbox gap={12} style={{ marginBottom: 16 }}>
+                <SocialConnectButton
+                  disabled={isLoadingSocialProfiles}
+                  isConnecting={githubConnect.isConnecting}
+                  isDisconnecting={githubConnect.isDisconnecting}
+                  profile={githubConnect.profile}
+                  provider="github"
+                  onConnect={githubConnect.connect}
+                  onDisconnect={githubConnect.disconnect}
                 />
-              </Form.Item>
 
-              <Form.Item name="twitter">
-                <Input
-                  placeholder={t('profileSetup.fields.twitter.placeholder')}
-                  prefix={
-                    <Icon fill={cssVar.colorTextSecondary} icon={SiX} style={{ marginRight: 8 }} />
-                  }
+                {/* Twitter OAuth Connect Button */}
+                <SocialConnectButton
+                  disabled={isLoadingSocialProfiles}
+                  isConnecting={twitterConnect.isConnecting}
+                  isDisconnecting={twitterConnect.isDisconnecting}
+                  profile={twitterConnect.profile}
+                  provider="twitter"
+                  onConnect={twitterConnect.connect}
+                  onDisconnect={twitterConnect.disconnect}
                 />
-              </Form.Item>
+              </Flexbox>
 
+              {/* Website - Manual Input */}
               <Form.Item
                 name="website"
                 rules={[

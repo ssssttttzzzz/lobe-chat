@@ -1,7 +1,18 @@
-import { type AgentItem, type LobeAgentConfig, type MetaData } from '@lobechat/types';
+import { type AgentItem, type AgentRankItem, type LobeAgentConfig } from '@lobechat/types';
 import { type PartialDeep } from 'type-fest';
 
 import { lambdaClient } from '@/libs/trpc/client';
+
+export const AVAILABLE_AGENTS_CONTEXT_LIMIT = 10;
+export const AVAILABLE_AGENTS_CONTEXT_QUERY_LIMIT = AVAILABLE_AGENTS_CONTEXT_LIMIT + 2;
+
+export interface AvailableAgentItem {
+  avatar: string | null;
+  backgroundColor: string | null;
+  description: string | null;
+  id: string;
+  title: string | null;
+}
 
 /**
  * Market agent model can be either a string or an object with model details
@@ -13,6 +24,13 @@ type MarketAgentModel =
       parameters?: Partial<LobeAgentConfig['params']>;
       provider?: LobeAgentConfig['provider'];
     };
+
+type AgentMetaUpdate = Partial<
+  Pick<
+    AgentItem,
+    'avatar' | 'backgroundColor' | 'description' | 'marketIdentifier' | 'tags' | 'title'
+  >
+>;
 
 /**
  * Normalize market agent config to standard agent config.
@@ -47,8 +65,7 @@ export interface CreateAgentParams {
 }
 
 export interface CreateAgentResult {
-  agentId?: string;
-  sessionId: string;
+  agentId: string;
 }
 
 export interface CreateAgentOnlyParams {
@@ -182,7 +199,7 @@ class AgentService {
   /**
    * Update agent meta and return the updated agent data
    */
-  updateAgentMeta = async (agentId: string, meta: Partial<MetaData>, signal?: AbortSignal) => {
+  updateAgentMeta = async (agentId: string, meta: AgentMetaUpdate, signal?: AbortSignal) => {
     return lambdaClient.agent.updateAgentConfig.mutate({ agentId, value: meta }, { signal });
   };
 
@@ -205,8 +222,19 @@ class AgentService {
    * Query non-virtual agents with optional keyword filter.
    * Returns agents with minimal info (id, title, description, avatar, backgroundColor).
    */
-  queryAgents = async (params?: { keyword?: string; limit?: number; offset?: number }) => {
+  queryAgents = async (params?: {
+    keyword?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<AvailableAgentItem[]> => {
     return lambdaClient.agent.queryAgents.query(params);
+  };
+
+  /**
+   * Count non-virtual agents with optional keyword filter, matching queryAgents conditions.
+   */
+  countAgents = async (params?: { keyword?: string }) => {
+    return lambdaClient.agent.countAgents.query(params);
   };
 
   /**
@@ -225,6 +253,20 @@ class AgentService {
     newTitle?: string,
   ): Promise<{ agentId: string } | null> => {
     return lambdaClient.agent.duplicateAgent.mutate({ agentId, newTitle });
+  };
+
+  /**
+   * Rank the user's agents by topic count (agent usage ranking).
+   */
+  rankAgents = async (limit?: number): Promise<AgentRankItem[]> => {
+    return lambdaClient.agent.rankAgents.query(limit);
+  };
+
+  transferAgent = async (
+    agentId: string,
+    targetWorkspaceId: string | null,
+  ): Promise<{ agentId: string; slug: string | null }> => {
+    return lambdaClient.agent.transferAgent.mutate({ agentId, targetWorkspaceId });
   };
 }
 

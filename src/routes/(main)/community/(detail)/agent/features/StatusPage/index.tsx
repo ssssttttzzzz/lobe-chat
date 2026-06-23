@@ -5,21 +5,22 @@ import { Button, FluentEmoji, Text } from '@lobehub/ui';
 import { Result } from 'antd';
 import { memo } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
+
+import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 
 interface StatusPageProps {
   status: 'unpublished' | 'archived' | 'deprecated';
 }
 
 const StatusPage = memo<StatusPageProps>(({ status }) => {
-  const navigate = useNavigate();
+  const navigate = useWorkspaceAwareNavigate();
   const { t } = useTranslation('discover');
 
   const handleBackToMarket = () => {
     navigate('/community/agent');
   };
 
-  // 审核中状态
+  // Under review status
   if (status === 'unpublished') {
     return (
       <div
@@ -60,7 +61,7 @@ const StatusPage = memo<StatusPageProps>(({ status }) => {
     );
   }
 
-  // 归档/拒绝状态
+  // Archived/rejected status
   const isArchived = status === 'archived';
   const statusKey = isArchived ? 'archived' : 'deprecated';
   const statusIcon = isArchived ? (

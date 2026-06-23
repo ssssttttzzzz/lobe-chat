@@ -2,7 +2,8 @@ import type { PartialDeep } from 'type-fest';
 import { z } from 'zod';
 
 import type { Plans } from '../subscription';
-import { TopicDisplayMode } from '../topic';
+import type { TopicGroupMode, TopicSortBy } from '../topic';
+import type { UserAgentOnboarding } from './agentOnboarding';
 import type { UserOnboarding } from './onboarding';
 import type { UserSettings } from './settings';
 
@@ -38,18 +39,40 @@ export type UserGuide = z.infer<typeof UserGuideSchema>;
 
 export const UserLabSchema = z.object({
   /**
+   * enable agent self-iteration feedback capture and policy execution
+   */
+  enableAgentSelfIteration: z.boolean().optional(),
+  /**
+   * enable the floating chat panel in agent document preview
+   */
+  enableAgentDocumentFloatingChatPanel: z.boolean().optional(),
+  /**
+   * enable the Fleet view (side-by-side running-task dashboard)
+   */
+  enableFleet: z.boolean().optional(),
+  /**
    * enable multi-agent group chat mode
    */
   enableGroupChat: z.boolean().optional(),
   /**
+   * enable the iMessage channel (BlueBubbles Desktop bridge)
+   */
+  enableImessage: z.boolean().optional(),
+  /**
    * enable markdown rendering in chat input editor
    */
   enableInputMarkdown: z.boolean().optional(),
+  /**
+   * show the "Add Platform Agent" entry in the create menu
+   */
+  enablePlatformAgent: z.boolean().optional(),
 });
 
 export type UserLab = z.infer<typeof UserLabSchema>;
 
 export interface UserPreference {
+  /** Last-used app for "Open working directory in…" split button. Empty/unknown values fall back to platform default. */
+  defaultOpenInApp?: string;
   /**
    * disable markdown rendering in chat input editor
    * @deprecated Use lab.enableInputMarkdown instead
@@ -62,10 +85,21 @@ export interface UserPreference {
    */
   lab?: UserLab;
   /**
+   * Last active workspace id. Used on cloud to land the user back in the
+   * workspace they last used when they open `/` — `null` means personal
+   * context. Stored as id (not slug) so workspace renames don't invalidate it.
+   */
+  lastWorkspaceId?: string | null;
+  /**
    * @deprecated Use settings.general.telemetry instead
    */
   telemetry?: boolean | null;
-  topicDisplayMode?: TopicDisplayMode;
+  topicGroupMode?: TopicGroupMode;
+  /**
+   * whether to include completed topics in the topic list
+   */
+  topicIncludeCompleted?: boolean;
+  topicSortBy?: TopicSortBy;
   /**
    * whether to use cmd + enter to send message
    */
@@ -80,6 +114,7 @@ export type ReferralStatusString =
   | 'revoked';
 
 export interface UserInitializationState {
+  agentOnboarding?: UserAgentOnboarding;
   avatar?: string;
   canEnablePWAGuide?: boolean;
   canEnableTrace?: boolean;
@@ -122,11 +157,15 @@ export interface SSOProvider {
 
 export const UserPreferenceSchema = z
   .object({
+    defaultOpenInApp: z.string().optional(),
     guide: UserGuideSchema.optional(),
     hideSyncAlert: z.boolean().optional(),
     lab: UserLabSchema.optional(),
+    lastWorkspaceId: z.string().nullable().optional(),
     telemetry: z.boolean().nullable(),
-    topicDisplayMode: z.nativeEnum(TopicDisplayMode).optional(),
+    topicGroupMode: z.enum(['byTime', 'byProject', 'flat', 'byStatus']).optional(),
+    topicIncludeCompleted: z.boolean().optional(),
+    topicSortBy: z.enum(['createdAt', 'updatedAt']).optional(),
     useCmdEnterToSend: z.boolean().optional(),
   })
   .partial();

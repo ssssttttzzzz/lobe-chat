@@ -5,7 +5,10 @@ import type { IAgentService, IDiscoverService } from '../types';
 
 // Create mock services
 const mockAgentService: IAgentService = {
+  countAgents: vi.fn(),
   createAgent: vi.fn(),
+  duplicateAgent: vi.fn(),
+  getAgentConfigById: vi.fn(),
   queryAgents: vi.fn(),
   removeAgent: vi.fn(),
 };
@@ -28,8 +31,10 @@ const mockAgentMeta = {
 
 vi.mock('@/store/agent', () => ({
   getAgentStoreState: vi.fn(() => ({
+    agentMap: { 'agent-id': mockAgentConfig },
     appendStreamingSystemRole: vi.fn(),
     finishStreamingSystemRole: vi.fn(),
+    internal_dispatchAgentMap: vi.fn(),
     optimisticUpdateAgentConfig: vi.fn(),
     optimisticUpdateAgentMeta: vi.fn(),
     startStreamingSystemRole: vi.fn(),
@@ -80,7 +85,7 @@ vi.mock('@/store/tool/selectors', () => ({
   builtinToolSelectors: {
     metaList: vi.fn(() => [{ identifier: 'lobe-web-browsing', meta: { title: 'Web Browsing' } }]),
   },
-  klavisStoreSelectors: {
+  composioStoreSelectors: {
     getServers: vi.fn(() => []),
   },
   lobehubSkillStoreSelectors: {
@@ -243,6 +248,7 @@ describe('AgentManagerRuntime', () => {
           backgroundColor: null,
         },
       ] as any);
+      vi.mocked(mockAgentService.countAgents).mockResolvedValue(2);
 
       const result = await runtime.searchAgents({
         keyword: 'test',
@@ -250,12 +256,13 @@ describe('AgentManagerRuntime', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.content).toContain('Found 2 agents');
+      expect(result.content).toContain('Found 2 agents in your workspace, showing 1-2');
       expect(result.state).toMatchObject({
         agents: expect.arrayContaining([
           expect.objectContaining({ id: 'agent-1', isMarket: false }),
           expect.objectContaining({ id: 'agent-2', isMarket: false }),
         ]),
+        hasMore: false,
         source: 'user',
         totalCount: 2,
       });
@@ -279,11 +286,13 @@ describe('AgentManagerRuntime', () => {
       });
 
       expect(result.success).toBe(true);
+      expect(mockAgentService.countAgents).not.toHaveBeenCalled();
       expect(result.state).toMatchObject({
         agents: expect.arrayContaining([
           expect.objectContaining({ id: 'market-agent-1', isMarket: true }),
         ]),
         source: 'market',
+        totalCount: 1,
       });
     });
 
@@ -297,6 +306,7 @@ describe('AgentManagerRuntime', () => {
           description: null,
         },
       ] as any);
+      vi.mocked(mockAgentService.countAgents).mockResolvedValue(1);
       vi.mocked(mockDiscoverService.getAssistantList).mockResolvedValue({
         items: [{ identifier: 'market-agent', title: 'Market Agent' } as any],
         totalCount: 1,
@@ -307,15 +317,118 @@ describe('AgentManagerRuntime', () => {
       expect(result.success).toBe(true);
       expect(result.state?.source).toBe('all');
       expect(result.state?.agents).toHaveLength(2);
+      expect(result.state?.totalCount).toBe(2);
     });
 
     it('should return no agents found message', async () => {
       vi.mocked(mockAgentService.queryAgents).mockResolvedValue([]);
+      vi.mocked(mockAgentService.countAgents).mockResolvedValue(0);
 
       const result = await runtime.searchAgents({ keyword: 'nonexistent', source: 'user' });
 
       expect(result.success).toBe(true);
       expect(result.content).toContain('No agents found');
+    });
+
+    it('should report the real total and a pagination hint when more agents exist', async () => {
+      const page = Array.from({ length: 20 }, (_, i) => ({
+        id: `agent-${i}`,
+        title: `Agent ${i}`,
+        description: null,
+        avatar: null,
+        backgroundColor: null,
+      }));
+      vi.mocked(mockAgentService.queryAgents).mockResolvedValue(page as any);
+      vi.mocked(mockAgentService.countAgents).mockResolvedValue(137);
+
+      const result = await runtime.searchAgents({ limit: 20, source: 'user' });
+
+      expect(result.success).toBe(true);
+      expect(result.content).toContain('Found 137 agents in your workspace, showing 1-20');
+      expect(result.content).toContain('call searchAgent with offset=20');
+      expect(result.state).toMatchObject({ hasMore: true, offset: 0, totalCount: 137 });
+    });
+
+    it('should pass offset through and compute the next page hint from it', async () => {
+      const page = Array.from({ length: 20 }, (_, i) => ({
+        id: `agent-${20 + i}`,
+        title: `Agent ${20 + i}`,
+        description: null,
+        avatar: null,
+        backgroundColor: null,
+      }));
+      vi.mocked(mockAgentService.queryAgents).mockResolvedValue(page as any);
+      vi.mocked(mockAgentService.countAgents).mockResolvedValue(50);
+
+      const result = await runtime.searchAgents({ limit: 20, offset: 20, source: 'user' });
+
+      expect(mockAgentService.queryAgents).toHaveBeenCalledWith({
+        keyword: undefined,
+        limit: 20,
+        offset: 20,
+      });
+      expect(result.content).toContain('Found 50 agents in your workspace, showing 21-40');
+      expect(result.content).toContain('call searchAgent with offset=40');
+      expect(result.state).toMatchObject({ hasMore: true, offset: 20 });
+    });
+
+    it('should note when the requested limit is capped', async () => {
+      vi.mocked(mockAgentService.queryAgents).mockResolvedValue([
+        {
+          id: 'agent-1',
+          title: 'Agent One',
+          description: null,
+          avatar: null,
+          backgroundColor: null,
+        },
+      ] as any);
+      vi.mocked(mockAgentService.countAgents).mockResolvedValue(1);
+
+      const result = await runtime.searchAgents({ limit: 50, source: 'user' });
+
+      expect(mockAgentService.queryAgents).toHaveBeenCalledWith({
+        keyword: undefined,
+        limit: 20,
+        offset: 0,
+      });
+      expect(result.content).toContain(
+        'requested limit 50 exceeds the maximum of 20, so results were capped at 20',
+      );
+    });
+
+    it('should explain an out-of-range offset instead of claiming no matches', async () => {
+      vi.mocked(mockAgentService.queryAgents).mockResolvedValue([]);
+      vi.mocked(mockAgentService.countAgents).mockResolvedValue(37);
+
+      const result = await runtime.searchAgents({ offset: 200, source: 'user' });
+
+      expect(result.success).toBe(true);
+      expect(result.content).toContain('No agents at offset 200; only 37 agents match');
+    });
+
+    it('should fall back to item count when marketplace omits totalCount', async () => {
+      vi.mocked(mockDiscoverService.getAssistantList).mockResolvedValue({
+        items: [
+          { identifier: 'market-agent-1', title: 'Market Agent' } as any,
+          { identifier: 'market-agent-2', title: 'Another Agent' } as any,
+        ],
+        totalCount: undefined,
+      } as any);
+
+      const result = await runtime.searchAgents({ source: 'market' });
+
+      expect(result.success).toBe(true);
+      expect(result.state?.totalCount).toBe(2);
+    });
+
+    it('should handle search failure', async () => {
+      vi.mocked(mockAgentService.queryAgents).mockRejectedValue(new Error('DB unavailable'));
+      vi.mocked(mockAgentService.countAgents).mockResolvedValue(0);
+
+      const result = await runtime.searchAgents({ source: 'user' });
+
+      expect(result.success).toBe(false);
+      expect(result.content).toContain('Failed to search agents');
     });
   });
 
@@ -398,6 +511,79 @@ describe('AgentManagerRuntime', () => {
         ]),
         totalCount: 2,
       });
+    });
+  });
+
+  describe('getAgentDetail', () => {
+    it('should get agent detail successfully', async () => {
+      vi.mocked(mockAgentService.getAgentConfigById).mockResolvedValue({
+        avatar: '🤖',
+        chatConfig: {} as any,
+        description: 'A test agent',
+        model: 'gpt-4o',
+        params: {} as any,
+        plugins: ['web-search'],
+        provider: 'openai',
+        systemRole: 'You are helpful',
+        title: 'Test Agent',
+      } as any);
+
+      const result = await runtime.getAgentDetail('agent-id');
+
+      expect(result.success).toBe(true);
+      expect(result.content).toContain('Test Agent');
+      expect(result.state).toMatchObject({
+        agentId: 'agent-id',
+        success: true,
+        meta: expect.objectContaining({ title: 'Test Agent' }),
+        config: expect.objectContaining({ model: 'gpt-4o' }),
+      });
+    });
+
+    it('should return not found for missing agent', async () => {
+      vi.mocked(mockAgentService.getAgentConfigById).mockResolvedValue(null);
+
+      const result = await runtime.getAgentDetail('missing-id');
+
+      expect(result.success).toBe(false);
+      expect(result.content).toContain('not found');
+    });
+  });
+
+  describe('duplicateAgent', () => {
+    it('should duplicate agent successfully', async () => {
+      vi.mocked(mockAgentService.duplicateAgent).mockResolvedValue({
+        agentId: 'new-agent-id',
+      });
+
+      const result = await runtime.duplicateAgent('source-id', 'Copy of Agent');
+
+      expect(result.success).toBe(true);
+      expect(result.content).toContain('Successfully duplicated agent');
+      expect(result.content).toContain('new-agent-id');
+      expect(result.state).toMatchObject({
+        newAgentId: 'new-agent-id',
+        sourceAgentId: 'source-id',
+        success: true,
+      });
+    });
+
+    it('should handle null result', async () => {
+      vi.mocked(mockAgentService.duplicateAgent).mockResolvedValue(null);
+
+      const result = await runtime.duplicateAgent('missing-id');
+
+      expect(result.success).toBe(false);
+      expect(result.content).toContain('Failed to duplicate agent');
+    });
+
+    it('should handle error', async () => {
+      vi.mocked(mockAgentService.duplicateAgent).mockRejectedValue(new Error('DB error'));
+
+      const result = await runtime.duplicateAgent('agent-id');
+
+      expect(result.success).toBe(false);
+      expect(result.content).toContain('Failed to duplicate agent');
     });
   });
 

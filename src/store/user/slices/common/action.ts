@@ -1,4 +1,5 @@
 import { isDesktop } from '@lobechat/const';
+import type { UserGeneralConfig } from '@lobechat/types';
 import { getSingletonAnalyticsOptional } from '@lobehub/analytics';
 import { type SWRResponse } from 'swr';
 import useSWR from 'swr';
@@ -6,6 +7,7 @@ import { type PartialDeep } from 'type-fest';
 
 import { DEFAULT_PREFERENCE } from '@/const/user';
 import { mutate, useOnlyFetchOnceSWR } from '@/libs/swr';
+import { taskTemplateKeys, userKeys } from '@/libs/swr/keys';
 import { userService } from '@/services/user';
 import { type StoreSetter } from '@/store/types';
 import { type UserStore } from '@/store/user';
@@ -19,7 +21,6 @@ import { userGeneralSettingsSelectors } from '../settings/selectors';
 
 const n = setNamespace('common');
 
-const GET_USER_STATE_KEY = 'initUserState';
 /**
  * Common actions
  */
@@ -27,6 +28,9 @@ const GET_USER_STATE_KEY = 'initUserState';
 type Setter = StoreSetter<UserStore>;
 export const createCommonSlice = (set: Setter, get: () => UserStore, _api?: unknown) =>
   new CommonActionImpl(set, get, _api);
+
+export const isTaskTemplateRecommendationKey = (key: unknown): boolean =>
+  Array.isArray(key) && key[0] === taskTemplateKeys.listDailyRecommend.root;
 
 export class CommonActionImpl {
   readonly #get: () => UserStore;
@@ -39,7 +43,7 @@ export class CommonActionImpl {
   }
 
   refreshUserState = async (): Promise<void> => {
-    await mutate(GET_USER_STATE_KEY);
+    await mutate(userKeys.initState());
   };
 
   updateAvatar = async (avatar: string): Promise<void> => {
@@ -53,7 +57,14 @@ export class CommonActionImpl {
   };
 
   updateInterests = async (interests: string[]): Promise<void> => {
+    const previousUser = this.#get().user;
+    if (previousUser) {
+      this.#set({ user: { ...previousUser, interests } }, false, n('updateInterests/optimistic'));
+    }
     await userService.updateInterests(interests);
+    void mutate(isTaskTemplateRecommendationKey).catch((error) => {
+      console.error('[taskTemplate:recommendationCache:invalidate]', error);
+    });
     await this.#get().refreshUserState();
   };
 
@@ -68,7 +79,7 @@ export class CommonActionImpl {
 
   useCheckTrace = (shouldFetch: boolean): SWRResponse<any> => {
     return useSWR<boolean>(
-      shouldFetch ? 'checkTrace' : null,
+      shouldFetch ? userKeys.checkTrace() : null,
       () => {
         const telemetry = userGeneralSettingsSelectors.telemetry(this.#get());
 
@@ -92,7 +103,7 @@ export class CommonActionImpl {
     },
   ): SWRResponse => {
     return useOnlyFetchOnceSWR<UserInitializationState>(
-      !!isLogin || isDesktop ? GET_USER_STATE_KEY : null,
+      !!isLogin || isDesktop ? userKeys.initState() : null,
       () => userService.getUserState(),
       {
         onError: (error) => {
@@ -139,6 +150,7 @@ export class CommonActionImpl {
                 isUserCanEnableTrace: data.canEnableTrace,
                 isUserHasConversation: data.hasConversation,
                 isUserStateInit: true,
+                agentOnboarding: data.agentOnboarding,
                 onboarding: data.onboarding,
                 preference,
                 referralStatus: data.referralStatus,
@@ -150,15 +162,34 @@ export class CommonActionImpl {
               n('initUserState'),
             );
 
+            const autoDetectedGeneralConfig: Partial<UserGeneralConfig> = {};
+            const currentGeneralSettings = data.settings?.general;
+
             // Auto-detect and sync browser timezone on first load
-            const currentTimezone = data.settings?.general?.timezone;
-            if (!currentTimezone && typeof Intl !== 'undefined') {
+            if (!currentGeneralSettings?.timezone && typeof Intl !== 'undefined') {
               const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-              if (detectedTimezone) {
-                this.#get()
-                  .updateGeneralConfig({ timezone: detectedTimezone })
-                  .catch(() => {});
-              }
+              if (detectedTimezone) autoDetectedGeneralConfig.timezone = detectedTimezone;
+            }
+
+            // Keep reply language aligned with the browser locale until the user makes a choice.
+            // Only auto-fill once onboarding has finished — otherwise it pre-empts the language
+            // step in the shared-prefix onboarding (commonStepsCompleted derives from this field
+            // being set, and an auto-fill would skip past the user's explicit choice).
+            const hasFinishedOnboarding =
+              !!data.onboarding?.finishedAt || !!data.agentOnboarding?.finishedAt;
+            if (
+              hasFinishedOnboarding &&
+              !currentGeneralSettings?.responseLanguage &&
+              typeof navigator !== 'undefined'
+            ) {
+              autoDetectedGeneralConfig.responseLanguage =
+                userGeneralSettingsSelectors.currentResponseLanguage(this.#get());
+            }
+
+            if (Object.keys(autoDetectedGeneralConfig).length > 0) {
+              this.#get()
+                .updateGeneralConfig(autoDetectedGeneralConfig)
+                .catch(() => {});
             }
 
             //analytics

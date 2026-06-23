@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import * as openAIContextBuilders from '../../core/contextBuilders/openai';
+import { isResponsesAPIModel } from '../openai/openaiModelId';
 import { LobeGithubCopilotAI } from './index';
 
 // Mock console.error to avoid polluting test output
@@ -13,7 +15,59 @@ global.fetch = mockFetch;
 describe('LobeGithubCopilotAI', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    vi.restoreAllMocks();
     mockFetch.mockReset();
+  });
+
+  describe('image payload conversion', () => {
+    it('should force image base64 conversion in responses mode', async () => {
+      const convertResponseInputsSpy = vi
+        .spyOn(openAIContextBuilders, 'convertOpenAIResponseInputs')
+        .mockRejectedValue({ status: 400 });
+
+      const futureTime = Date.now() + 600_000;
+      const instance = new LobeGithubCopilotAI({
+        bearerToken: 'cached-bearer-token',
+        bearerTokenExpiresAt: futureTime,
+        oauthAccessToken: 'ghu_oauth',
+      });
+
+      await expect(
+        instance.chat({
+          messages: [{ content: 'hello', role: 'user' }],
+          model: 'gpt-5.1-codex-mini',
+        } as any),
+      ).rejects.toBeDefined();
+
+      expect(convertResponseInputsSpy).toHaveBeenCalledWith(expect.any(Array), {
+        forceImageBase64: true,
+        strictToolPairing: true,
+      });
+    });
+
+    it('should force image base64 conversion in chat completions mode', async () => {
+      const convertMessagesSpy = vi
+        .spyOn(openAIContextBuilders, 'convertOpenAIMessages')
+        .mockRejectedValue({ status: 400 });
+
+      const futureTime = Date.now() + 600_000;
+      const instance = new LobeGithubCopilotAI({
+        bearerToken: 'cached-bearer-token',
+        bearerTokenExpiresAt: futureTime,
+        oauthAccessToken: 'ghu_oauth',
+      });
+
+      await expect(
+        instance.chat({
+          messages: [{ content: 'hello', role: 'user' }],
+          model: 'gpt-4o',
+        } as any),
+      ).rejects.toBeDefined();
+
+      expect(convertMessagesSpy).toHaveBeenCalledWith(expect.any(Array), {
+        forceImageBase64: true,
+      });
+    });
   });
 
   describe('constructor', () => {
@@ -162,19 +216,61 @@ describe('LobeGithubCopilotAI', () => {
 
       expect(models).toEqual([]);
     });
+
+    it('should throw regular Error when models request fails', async () => {
+      mockFetch.mockResolvedValueOnce({
+        json: () => Promise.resolve({ error: { message: 'Copilot access denied' } }),
+        ok: false,
+        status: 403,
+      });
+
+      const instance = new LobeGithubCopilotAI({
+        bearerToken: 'cached-bearer-token',
+        bearerTokenExpiresAt: Date.now() + 60 * 60 * 1000,
+      });
+
+      try {
+        await instance.models();
+        expect.fail('Expected models() to reject');
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe('GitHub Copilot models API request failed');
+        expect((error as Error).cause).toEqual({ status: 403 });
+        expect((error as Error & { errorType?: string }).errorType).toBeUndefined();
+      }
+    });
+
+    it('should throw runtime payload when token exchange fails before models request', async () => {
+      mockFetch.mockResolvedValueOnce({
+        json: () => Promise.resolve({}),
+        ok: false,
+        status: 403,
+      });
+
+      const instance = new LobeGithubCopilotAI({ apiKey: 'ghp_models_denied' });
+
+      try {
+        await instance.models();
+        expect.fail('Expected models() to reject');
+      } catch (error) {
+        expect(error).toEqual({
+          error: { message: 'No GitHub Copilot subscription or access denied' },
+          errorType: 'PermissionDenied',
+        });
+      }
+    });
   });
 
   describe('error handling in constructor', () => {
-    it('should throw InvalidGithubCopilotToken when no credentials provided', () => {
-      expect(() => new LobeGithubCopilotAI({})).toThrow();
-    });
-
-    it('should throw with descriptive message', () => {
+    it('should throw runtime payload when no credentials provided', () => {
       try {
         new LobeGithubCopilotAI({});
         expect.fail('Should have thrown');
       } catch (error: any) {
-        expect(error.errorType).toBe('InvalidGithubCopilotToken');
+        expect(error).toEqual({
+          error: { message: 'GitHub Personal Access Token or OAuth token is required' },
+          errorType: 'InvalidGithubCopilotToken',
+        });
       }
     });
   });
@@ -183,6 +279,305 @@ describe('LobeGithubCopilotAI', () => {
     it('should have correct base URL', () => {
       const instance = new LobeGithubCopilotAI({ apiKey: 'test' });
       expect(instance.baseURL).toBe('https://api.githubcopilot.com');
+    });
+  });
+
+  describe('responses api routing', () => {
+    it('should detect parsed codex mini models as responses api models', () => {
+      expect(isResponsesAPIModel('gpt-5.1-codex-mini')).toBe(true);
+    });
+
+    it('should not treat gpt-4o as responses-only model', () => {
+      expect(isResponsesAPIModel('gpt-4o')).toBe(false);
+    });
+
+    it('should convert chat completion tool to responses tool', () => {
+      const instance = new LobeGithubCopilotAI({ apiKey: 'ghp_test' });
+      const chatTool = {
+        function: {
+          description: 'Get weather',
+          name: 'get_weather',
+          parameters: {
+            properties: {
+              city: { type: 'string' },
+            },
+            type: 'object',
+          },
+        },
+        type: 'function',
+      };
+
+      const responseTool = (instance as any).convertChatCompletionToolToResponseTool(chatTool);
+
+      expect(responseTool).toEqual({
+        description: 'Get weather',
+        name: 'get_weather',
+        parameters: {
+          properties: {
+            city: { type: 'string' },
+          },
+          type: 'object',
+        },
+        type: 'function',
+      });
+    });
+
+    it('should map verbosity to responses text.verbosity', async () => {
+      vi.resetModules();
+
+      const responsesCreateMock = vi.fn().mockRejectedValue({ status: 500 });
+
+      vi.doMock('openai', () => {
+        return {
+          default: class MockOpenAI {
+            responses = {
+              create: responsesCreateMock,
+            };
+          },
+        };
+      });
+
+      const { LobeGithubCopilotAI: ReloadedLobeGithubCopilotAI } = await import('./index');
+
+      const futureTime = Date.now() + 600_000;
+      const instance = new ReloadedLobeGithubCopilotAI({
+        bearerToken: 'cached-bearer-token',
+        bearerTokenExpiresAt: futureTime,
+        oauthAccessToken: 'ghu_oauth',
+      });
+
+      await expect(
+        instance.chat({
+          messages: [{ content: 'hello', role: 'user' }],
+          model: 'gpt-5.1-codex-mini',
+          verbosity: 'high',
+        } as any),
+      ).rejects.toBeDefined();
+
+      expect(responsesCreateMock).toHaveBeenCalledTimes(1);
+
+      const payload = responsesCreateMock.mock.calls[0][0];
+      expect(payload.text).toEqual({ verbosity: 'high' });
+      expect(payload.verbosity).toBeUndefined();
+
+      vi.doUnmock('openai');
+    });
+  });
+
+  describe('debug env flags', () => {
+    it('should enable chat completion request debug with DEBUG_GITHUBCOPILOT_CHAT_COMPLETION', async () => {
+      vi.resetModules();
+
+      const chatCompletionCreateMock = vi.fn().mockRejectedValue({ status: 500 });
+
+      vi.doMock('openai', () => {
+        return {
+          default: class MockOpenAI {
+            chat = {
+              completions: {
+                create: chatCompletionCreateMock,
+              },
+            };
+
+            responses = {
+              create: vi.fn(),
+            };
+          },
+        };
+      });
+
+      process.env.DEBUG_GITHUBCOPILOT_CHAT_COMPLETION = '1';
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      const { LobeGithubCopilotAI: ReloadedLobeGithubCopilotAI } = await import('./index');
+
+      const futureTime = Date.now() + 600_000;
+      const instance = new ReloadedLobeGithubCopilotAI({
+        bearerToken: 'cached-bearer-token',
+        bearerTokenExpiresAt: futureTime,
+        oauthAccessToken: 'ghu_oauth',
+      });
+
+      await expect(
+        instance.chat({
+          messages: [{ content: 'hello', role: 'user' }],
+          model: 'gpt-4o',
+        } as any),
+      ).rejects.toBeDefined();
+
+      expect(chatCompletionCreateMock).toHaveBeenCalledTimes(1);
+      expect(logSpy).toHaveBeenCalledWith('[requestPayload]');
+
+      delete process.env.DEBUG_GITHUBCOPILOT_CHAT_COMPLETION;
+      vi.doUnmock('openai');
+    });
+
+    it('should enable responses request debug with DEBUG_GITHUBCOPILOT_RESPONSES', async () => {
+      vi.resetModules();
+
+      const responsesCreateMock = vi.fn().mockRejectedValue({ status: 500 });
+
+      vi.doMock('openai', () => {
+        return {
+          default: class MockOpenAI {
+            chat = {
+              completions: {
+                create: vi.fn(),
+              },
+            };
+
+            responses = {
+              create: responsesCreateMock,
+            };
+          },
+        };
+      });
+
+      process.env.DEBUG_GITHUBCOPILOT_RESPONSES = '1';
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      const { LobeGithubCopilotAI: ReloadedLobeGithubCopilotAI } = await import('./index');
+
+      const futureTime = Date.now() + 600_000;
+      const instance = new ReloadedLobeGithubCopilotAI({
+        bearerToken: 'cached-bearer-token',
+        bearerTokenExpiresAt: futureTime,
+        oauthAccessToken: 'ghu_oauth',
+      });
+
+      await expect(
+        instance.chat({
+          messages: [{ content: 'hello', role: 'user' }],
+          model: 'gpt-5.1-codex-mini',
+        } as any),
+      ).rejects.toBeDefined();
+
+      expect(responsesCreateMock).toHaveBeenCalledTimes(1);
+      expect(logSpy).toHaveBeenCalledWith('[requestPayload]');
+
+      delete process.env.DEBUG_GITHUBCOPILOT_RESPONSES;
+      vi.doUnmock('openai');
+    });
+  });
+
+  describe('anthropic mode for claude models', () => {
+    it('should route claude models to anthropic messages API', async () => {
+      vi.resetModules();
+
+      const openAIChatCreateMock = vi.fn().mockRejectedValue({ status: 500 });
+      const openAIResponsesCreateMock = vi.fn().mockRejectedValue({ status: 500 });
+      const anthropicMessagesCreateMock = vi.fn().mockRejectedValue({ status: 500 });
+      const anthropicCtorSpy = vi.fn();
+
+      vi.doMock('openai', () => {
+        return {
+          default: class MockOpenAI {
+            chat = {
+              completions: {
+                create: openAIChatCreateMock,
+              },
+            };
+
+            responses = {
+              create: openAIResponsesCreateMock,
+            };
+          },
+        };
+      });
+
+      vi.doMock('@anthropic-ai/sdk', () => {
+        return {
+          default: class MockAnthropic {
+            messages = {
+              create: anthropicMessagesCreateMock,
+            };
+
+            constructor(options: any) {
+              anthropicCtorSpy(options);
+            }
+          },
+        };
+      });
+
+      const { LobeGithubCopilotAI: ReloadedLobeGithubCopilotAI } = await import('./index');
+
+      const futureTime = Date.now() + 600_000;
+      const instance = new ReloadedLobeGithubCopilotAI({
+        bearerToken: 'cached-bearer-token',
+        bearerTokenExpiresAt: futureTime,
+        oauthAccessToken: 'ghu_oauth',
+      });
+
+      await expect(
+        instance.chat({
+          messages: [{ content: 'hello', role: 'user' }],
+          model: 'claude-3.7-sonnet',
+        } as any),
+      ).rejects.toBeDefined();
+
+      expect(anthropicMessagesCreateMock).toHaveBeenCalledTimes(1);
+      expect(openAIChatCreateMock).not.toHaveBeenCalled();
+      expect(openAIResponsesCreateMock).not.toHaveBeenCalled();
+
+      expect(anthropicCtorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          baseURL: 'https://api.githubcopilot.com',
+          defaultHeaders: expect.objectContaining({
+            'Authorization': 'Bearer cached-bearer-token',
+            'Copilot-Integration-Id': 'vscode-chat',
+            'anthropic-version': '2023-06-01',
+          }),
+        }),
+      );
+
+      vi.doUnmock('openai');
+      vi.doUnmock('@anthropic-ai/sdk');
+    });
+
+    it('should preserve explicit thinking and effort for claude models', async () => {
+      vi.resetModules();
+
+      const anthropicMessagesCreateMock = vi.fn().mockRejectedValue({ status: 500 });
+
+      vi.doMock('@anthropic-ai/sdk', () => {
+        return {
+          default: class MockAnthropic {
+            messages = {
+              create: anthropicMessagesCreateMock,
+            };
+          },
+        };
+      });
+
+      const { LobeGithubCopilotAI: ReloadedLobeGithubCopilotAI } = await import('./index');
+
+      const futureTime = Date.now() + 600_000;
+      const instance = new ReloadedLobeGithubCopilotAI({
+        bearerToken: 'cached-bearer-token',
+        bearerTokenExpiresAt: futureTime,
+        oauthAccessToken: 'ghu_oauth',
+      });
+
+      await expect(
+        instance.chat({
+          effort: 'high',
+          messages: [{ content: 'hello', role: 'user' }],
+          model: 'claude-3.7-sonnet',
+          thinking: { budget_tokens: 2048, type: 'enabled' },
+        } as any),
+      ).rejects.toBeDefined();
+
+      const payload = anthropicMessagesCreateMock.mock.calls[0][0];
+
+      expect(payload.output_config).toEqual({ effort: 'high' });
+      expect(payload.thinking).toEqual(
+        expect.objectContaining({
+          budget_tokens: 2048,
+          type: 'enabled',
+        }),
+      );
+
+      vi.doUnmock('@anthropic-ai/sdk');
     });
   });
 });

@@ -1,22 +1,20 @@
 'use client';
 
-import { ThemeProvider } from '@lobehub/ui';
+import { ConfigProvider, ThemeProvider } from '@lobehub/ui';
+import * as m from 'motion/react-m';
 import { type ComponentType, type ReactElement } from 'react';
-import { lazy, memo, Suspense, useCallback, useEffect } from 'react';
-import type { RouteObject } from 'react-router-dom';
-import {
-  createBrowserRouter,
-  Navigate,
-  Outlet,
-  useNavigate,
-  useRouteError,
-} from 'react-router-dom';
+import { lazy, memo, Suspense, useLayoutEffect } from 'react';
+import type { RouteObject } from 'react-router';
+import { createBrowserRouter, Navigate, Outlet, useNavigate, useRouteError } from 'react-router';
 
 import BusinessGlobalProvider from '@/business/client/BusinessGlobalProvider';
 import ErrorCapture from '@/components/Error';
 import Loading from '@/components/Loading/BrandTextLoading';
+import { useIsDark } from '@/hooks/useIsDark';
 import SPAGlobalProvider from '@/layout/SPAGlobalProvider';
+import AppLayer from '@/spa/AppLayer';
 import { useGlobalStore } from '@/store/global';
+import { createNavigationRef } from '@/store/global/initialState';
 import { isChunkLoadError, notifyChunkError } from '@/utils/chunkError';
 
 async function importModule<T>(importFn: () => Promise<T>): Promise<T> {
@@ -24,6 +22,11 @@ async function importModule<T>(importFn: () => Promise<T>): Promise<T> {
 }
 
 function resolveLazyModule<P>(module: { default: ComponentType<P> } | ComponentType<P>) {
+  if (module == null) {
+    throw new Error(
+      'Dynamic import resolved to undefined. This usually means a chunk failed to load.',
+    );
+  }
   if (typeof module === 'function') {
     return { default: module };
   }
@@ -85,63 +88,45 @@ export function dynamicLayout<P = NonNullable<unknown>>(
   );
 }
 
-/**
- * Error boundary component for React Router
- * Displays an error page and provides a reset function to navigate to a specific path
- *
- * @example
- * import { ErrorBoundary } from '@/utils/dynamicPage';
- *
- * // In router config:
- * {
- *   path: 'chat',
- *   errorElement: <ErrorBoundary resetPath="/chat" />
- * }
- */
 export interface ErrorBoundaryProps {
-  resetPath: string;
+  /** Base path for "back home" on the error screen (defaults to `/`). */
+  resetPath?: string;
 }
 
 export const ErrorBoundary = ({ resetPath }: ErrorBoundaryProps) => {
   const error = useRouteError() as Error;
-  const navigate = useNavigate();
-  const reset = useCallback(() => {
-    navigate(resetPath);
-  }, [navigate, resetPath]);
+  const isDark = useIsDark();
+  const appearance = isDark ? 'dark' : 'light';
 
   if (typeof window !== 'undefined' && isChunkLoadError(error)) {
     notifyChunkError();
   }
 
   return (
-    <ThemeProvider theme={{ cssVar: { key: 'lobe-vars' } }}>
-      <ErrorCapture error={error} reset={reset} />
+    <ThemeProvider
+      appearance={appearance}
+      defaultAppearance={appearance}
+      defaultThemeMode={appearance}
+      theme={{ cssVar: { key: 'lobe-vars' } }}
+    >
+      <ConfigProvider motion={m}>
+        <ErrorCapture error={error} resetPath={resetPath} />
+      </ConfigProvider>
     </ThemeProvider>
   );
 };
 
 /**
- * Component to register navigate function in global store
- * This allows navigation to be triggered from anywhere in the app, including stores
- *
- * @example
- * import { NavigatorRegistrar } from '@/utils/dynamicPage';
- *
- * // In router root layout:
- * const RootLayout = () => (
- *   <>
- *     <NavigatorRegistrar />
- *     <YourMainLayout />
- *   </>
- * );
+ * Syncs React Router's `navigate` into `navigationRef` (see `getStableNavigate` / `useStableNavigate`).
+ * Mounted once on {@link RouterRoot} so imperative navigation works app-wide (desktop + mobile).
  */
 export const NavigatorRegistrar = memo(() => {
   const navigate = useNavigate();
 
-  useEffect(() => {
-    useGlobalStore.setState({ navigate });
+  useLayoutEffect(() => {
+    useGlobalStore.setState({ navigationRef: { current: navigate } });
     return () => {
-      useGlobalStore.setState({ navigate: undefined });
+      useGlobalStore.setState({ navigationRef: createNavigationRef() });
     };
   }, [navigate]);
 
@@ -155,7 +140,10 @@ export interface CreateAppRouterOptions {
 const RouterRoot = memo(() => (
   <SPAGlobalProvider>
     <BusinessGlobalProvider>
-      <Outlet />
+      <NavigatorRegistrar />
+      <AppLayer>
+        <Outlet />
+      </AppLayer>
     </BusinessGlobalProvider>
   </SPAGlobalProvider>
 ));
@@ -178,7 +166,7 @@ export function createAppRouter(routes: RouteObject[], options?: CreateAppRouter
       {
         children: routes,
         element: <RouterRoot />,
-        errorElement: <ErrorBoundary resetPath="/" />,
+        errorElement: <ErrorBoundary />,
         path: '/',
       },
     ],

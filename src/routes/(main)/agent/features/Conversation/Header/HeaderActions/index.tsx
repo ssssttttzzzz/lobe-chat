@@ -4,17 +4,20 @@ import { ActionIcon, DropdownMenu } from '@lobehub/ui';
 import { MoreHorizontal } from 'lucide-react';
 import { memo } from 'react';
 
-import { DESKTOP_HEADER_ICON_SIZE } from '@/const/layoutTokens';
+import HeaderSlot from '@/routes/(main)/agent/(chat)/_layout/HeaderSlot';
 
 import { useMenu } from './useMenu';
 
 const HeaderActions = memo(() => {
-  const { menuItems } = useMenu();
+  const { menuHeader, menuItems } = useMenu();
 
   return (
-    <DropdownMenu items={menuItems}>
-      <ActionIcon icon={MoreHorizontal} size={DESKTOP_HEADER_ICON_SIZE} />
-    </DropdownMenu>
+    <>
+      <HeaderSlot.Outlet />
+      <DropdownMenu header={menuHeader} items={menuItems}>
+        <ActionIcon icon={MoreHorizontal} size={'small'} />
+      </DropdownMenu>
+    </>
   );
 });
 

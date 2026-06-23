@@ -1,5 +1,6 @@
 import { type DropdownItem } from '@lobehub/ui';
-import { DropdownMenu, Icon } from '@lobehub/ui';
+import { DropdownMenu, Icon, Tooltip } from '@lobehub/ui';
+import { confirmModal } from '@lobehub/ui/base-ui';
 import { App } from 'antd';
 import {
   BookMinusIcon,
@@ -12,6 +13,8 @@ import { memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import RepoIcon from '@/components/LibIcon';
+import { useKnowledgeBaseListContext } from '@/features/ResourceManager/components/KnowledgeBaseListProvider';
+import { usePermission } from '@/hooks/usePermission';
 import { useResourceManagerStore } from '@/routes/(main)/resource/features/store';
 import { useKnowledgeBaseStore } from '@/store/library';
 
@@ -32,22 +35,23 @@ interface BatchActionsDropdownProps {
 
 const BatchActionsDropdown = memo<BatchActionsDropdownProps>(({ selectCount, onActionClick }) => {
   const { t } = useTranslation(['components', 'common', 'file', 'knowledgeBase']);
-  const { modal, message } = App.useApp();
+  const { message } = App.useApp();
 
-  const [libraryId, selectedFileIds] = useResourceManagerStore((s) => [
-    s.libraryId,
-    s.selectedFileIds,
+  const libraryId = useResourceManagerStore((s) => s.libraryId);
+  const [resolveSelectedResourceIds, selectAllState] = useResourceManagerStore((s) => [
+    s.resolveSelectedResourceIds,
+    s.selectAllState,
   ]);
-  const [useFetchKnowledgeBaseList, addFilesToKnowledgeBase] = useKnowledgeBaseStore((s) => [
-    s.useFetchKnowledgeBaseList,
-    s.addFilesToKnowledgeBase,
-  ]);
-  const { data: knowledgeBases } = useFetchKnowledgeBaseList();
+  const addFilesToKnowledgeBase = useKnowledgeBaseStore((s) => s.addFilesToKnowledgeBase);
+  const knowledgeBases = useKnowledgeBaseListContext();
+  const { allowed: canEditResources, reason } = usePermission('edit_own_content');
 
   const menuItems = useMemo<DropdownItem[]>(() => {
     const items: DropdownItem[] = [];
 
     // Show delete library option only when in a knowledge base and no files selected
+    if (!canEditResources) return items;
+
     if (libraryId && selectCount === 0) {
       items.push({
         danger: true,
@@ -55,14 +59,17 @@ const BatchActionsDropdown = memo<BatchActionsDropdownProps>(({ selectCount, onA
         key: 'deleteLibrary',
         label: t('header.actions.deleteLibrary', { ns: 'file' }),
         onClick: async () => {
-          modal.confirm({
+          confirmModal({
+            cancelText: t('cancel', { ns: 'common' }),
+            content: t('library.list.confirmRemoveLibrary', { ns: 'file' }),
             okButtonProps: {
               danger: true,
             },
+            okText: t('delete', { ns: 'common' }),
             onOk: async () => {
               await onActionClick('deleteLibrary');
             },
-            title: t('library.list.confirmRemoveLibrary', { ns: 'file' }),
+            title: t('header.actions.deleteLibrary', { ns: 'file' }),
           });
         },
       });
@@ -70,7 +77,7 @@ const BatchActionsDropdown = memo<BatchActionsDropdownProps>(({ selectCount, onA
     }
 
     // Filter out current knowledge base and create submenu items
-    const availableKnowledgeBases = (knowledgeBases || []).filter((kb) => kb.id !== libraryId);
+    const availableKnowledgeBases = knowledgeBases.filter((kb) => kb.id !== libraryId);
 
     const addToKnowledgeBaseSubmenu: DropdownItem[] = availableKnowledgeBases.map((kb) => ({
       disabled: selectCount === 0,
@@ -79,10 +86,11 @@ const BatchActionsDropdown = memo<BatchActionsDropdownProps>(({ selectCount, onA
       label: <span style={{ marginLeft: 8 }}>{kb.name}</span>,
       onClick: async () => {
         try {
-          await addFilesToKnowledgeBase(kb.id, selectedFileIds);
+          const effectiveSelectedIds = await resolveSelectedResourceIds();
+          await addFilesToKnowledgeBase(kb.id, effectiveSelectedIds);
           message.success(
             t('addToKnowledgeBase.addSuccess', {
-              count: selectCount,
+              count: selectAllState === 'all' ? effectiveSelectedIds.length : selectCount,
               ns: 'knowledgeBase',
             }),
           );
@@ -100,17 +108,20 @@ const BatchActionsDropdown = memo<BatchActionsDropdownProps>(({ selectCount, onA
         key: 'removeFromKnowledgeBase',
         label: t('FileManager.actions.removeFromLibrary'),
         onClick: () => {
-          modal.confirm({
+          confirmModal({
+            cancelText: t('cancel', { ns: 'common' }),
+            content: t('FileManager.actions.confirmRemoveFromLibrary', {
+              count: selectCount,
+            }),
             okButtonProps: {
               danger: true,
             },
+            okText: t('FileManager.actions.removeFromLibrary'),
             onOk: async () => {
               await onActionClick('removeFromKnowledgeBase');
               message.success(t('FileManager.actions.removeFromLibrarySuccess'));
             },
-            title: t('FileManager.actions.confirmRemoveFromLibrary', {
-              count: selectCount,
-            }),
+            title: t('FileManager.actions.removeFromLibrary'),
           });
         },
       });
@@ -154,15 +165,18 @@ const BatchActionsDropdown = memo<BatchActionsDropdownProps>(({ selectCount, onA
         key: 'delete',
         label: t('delete', { ns: 'common' }),
         onClick: async () => {
-          modal.confirm({
+          confirmModal({
+            cancelText: t('cancel', { ns: 'common' }),
+            content: t('FileManager.actions.confirmDeleteMultiFiles', { count: selectCount }),
             okButtonProps: {
               danger: true,
             },
+            okText: t('delete', { ns: 'common' }),
             onOk: async () => {
               await onActionClick('delete');
               message.success(t('FileManager.actions.deleteSuccess'));
             },
-            title: t('FileManager.actions.confirmDeleteMultiFiles', { count: selectCount }),
+            title: t('delete', { ns: 'common' }),
           });
         },
       },
@@ -172,21 +186,25 @@ const BatchActionsDropdown = memo<BatchActionsDropdownProps>(({ selectCount, onA
   }, [
     libraryId,
     selectCount,
-    selectedFileIds,
+    selectAllState,
     onActionClick,
     addFilesToKnowledgeBase,
+    resolveSelectedResourceIds,
     t,
-    modal,
     message,
     knowledgeBases,
+    canEditResources,
   ]);
 
   return (
     <DropdownMenu items={menuItems} placement="bottomLeft">
-      <ActionIconWithChevron
-        icon={CircleEllipsisIcon}
-        title={t('FileManager.actions.batchActions', 'Batch actions')}
-      />
+      <Tooltip title={canEditResources ? undefined : reason}>
+        <ActionIconWithChevron
+          disabled={!canEditResources}
+          icon={CircleEllipsisIcon}
+          title={t('FileManager.actions.batchActions', 'Batch actions')}
+        />
+      </Tooltip>
     </DropdownMenu>
   );
 });

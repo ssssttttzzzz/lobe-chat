@@ -1,17 +1,16 @@
 import { type MenuProps } from '@lobehub/ui';
 import { Icon } from '@lobehub/ui';
+import { confirmModal } from '@lobehub/ui/base-ui';
 import { App, Upload } from 'antd';
 import { css, cx } from 'antd-style';
 import { Hash, Import, LucideCheck, Trash } from 'lucide-react';
 import { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { usePermission } from '@/hooks/usePermission';
 import { useChatStore } from '@/store/chat';
 import { useGlobalStore } from '@/store/global';
 import { systemStatusSelectors } from '@/store/global/selectors';
-import { useUserStore } from '@/store/user';
-import { preferenceSelectors } from '@/store/user/selectors';
-import { TopicDisplayMode } from '@/types/topic';
 
 const hotArea = css`
   &::before {
@@ -32,6 +31,8 @@ export const useTopicActionsDropdownMenu = (
   const { t } = useTranslation(['topic', 'common']);
   const { modal } = App.useApp();
   const { onUploadClose } = options;
+  const { allowed: canCreateTopic } = usePermission('create_content');
+  const { allowed: canEditTopic } = usePermission('edit_own_content');
 
   const [removeUnstarredTopic, removeAllTopic, importTopic] = useChatStore((s) => [
     s.removeUnstarredTopic,
@@ -58,31 +59,12 @@ export const useTopicActionsDropdownMenu = (
     [importTopic, modal, onUploadClose, t],
   );
 
-  const [topicDisplayMode, updatePreference] = useUserStore((s) => [
-    preferenceSelectors.topicDisplayMode(s),
-    s.updatePreference,
-  ]);
-
   const [topicPageSize, updateSystemStatus] = useGlobalStore((s) => [
     systemStatusSelectors.topicPageSize(s),
     s.updateSystemStatus,
   ]);
 
   return useMemo(() => {
-    const displayModeOrder = [
-      TopicDisplayMode.ByUpdatedTime,
-      TopicDisplayMode.ByCreatedTime,
-      TopicDisplayMode.Flat,
-    ];
-    const displayModeItems = displayModeOrder.map((mode) => ({
-      icon: topicDisplayMode === mode ? <Icon icon={LucideCheck} /> : <div />,
-      key: mode,
-      label: t(`groupMode.${mode}`),
-      onClick: () => {
-        updatePreference({ topicDisplayMode: mode });
-      },
-    }));
-
     const pageSizeOptions = [20, 40, 60, 100];
     const pageSizeItems = pageSizeOptions.map((size) => ({
       icon: topicPageSize === size ? <Icon icon={LucideCheck} /> : <div />,
@@ -94,12 +76,9 @@ export const useTopicActionsDropdownMenu = (
     }));
 
     return [
-      ...displayModeItems,
-      {
-        type: 'divider' as const,
-      },
       {
         children: pageSizeItems,
+        extra: topicPageSize,
         icon: <Icon icon={Hash} />,
         key: 'displayItems',
         label: t('displayItems'),
@@ -108,10 +87,16 @@ export const useTopicActionsDropdownMenu = (
         type: 'divider' as const,
       },
       {
+        disabled: !canCreateTopic,
         icon: <Icon icon={Import} />,
         key: 'import',
         label: (
-          <Upload accept=".json" beforeUpload={handleImport} showUploadList={false}>
+          <Upload
+            accept=".json"
+            beforeUpload={handleImport}
+            disabled={!canCreateTopic}
+            showUploadList={false}
+          >
             <div className={cx(hotArea)}>{t('actions.import')}</div>
           </Upload>
         ),
@@ -121,13 +106,13 @@ export const useTopicActionsDropdownMenu = (
         type: 'divider' as const,
       },
       {
+        disabled: !canEditTopic,
         icon: <Icon icon={Trash} />,
         key: 'deleteUnstarred',
         label: t('actions.removeUnstarred'),
         onClick: () => {
-          modal.confirm({
+          confirmModal({
             cancelText: t('cancel', { ns: 'common' }),
-            centered: true,
             okButtonProps: { danger: true },
             okText: t('ok', { ns: 'common' }),
             onOk: removeUnstarredTopic,
@@ -137,13 +122,13 @@ export const useTopicActionsDropdownMenu = (
       },
       {
         danger: true,
+        disabled: !canEditTopic,
         icon: <Icon icon={Trash} />,
         key: 'deleteAll',
         label: t('actions.removeAll'),
         onClick: () => {
-          modal.confirm({
+          confirmModal({
             cancelText: t('cancel', { ns: 'common' }),
-            centered: true,
             okButtonProps: { danger: true },
             okText: t('ok', { ns: 'common' }),
             onOk: removeAllTopic,
@@ -153,11 +138,11 @@ export const useTopicActionsDropdownMenu = (
       },
     ].filter(Boolean) as MenuProps['items'];
   }, [
-    topicDisplayMode,
     topicPageSize,
-    updatePreference,
     updateSystemStatus,
     handleImport,
+    canCreateTopic,
+    canEditTopic,
     onUploadClose,
     removeUnstarredTopic,
     removeAllTopic,

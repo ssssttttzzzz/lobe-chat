@@ -39,7 +39,7 @@ Prettier 负责代码格式化，以保证代码的一致性。您可以在 `.pr
 
 ### 风格检查
 
-你不需要手动运行这些检查，项目配置了 husky 会在您提交代码时自动运行 lint-staged 检查你提交的文件是否符合以上规范。
+你不需要手动运行这些检查，项目配置了 Git hooks 会在您提交代码时自动运行 lint-staged 检查你提交的文件是否符合以上规范。
 
 ## 贡献流程
 
@@ -91,17 +91,17 @@ bunx vitest run --silent='passed-only' '[file-path]'
 
 提交信息请使用以下 emoji 作为前缀：
 
-| Emoji | 代码                     | 类型     | 说明          | 触发发布？ |
-| ----- | ------------------------ | -------- | ------------- | ---------- |
-| ✨    | `:sparkles:`             | feat     | 新功能        | 是         |
-| 🐛    | `:bug:`                  | fix      | Bug 修复      | 是         |
-| 📝    | `:memo:`                 | docs     | 文档更新      | 否         |
-| 💄    | `:lipstick:`             | style    | UI / 样式更改 | 否         |
-| ♻️    | `:recycle:`              | refactor | 代码重构      | 否         |
-| ✅    | `:white_check_mark:`     | test     | 测试相关      | 否         |
-| 🔨    | `:hammer:`               | chore    | 维护任务      | 否         |
-| 🚀    | `:rocket:`               | perf     | 性能优化      | 否         |
-| 🌐    | `:globe_with_meridians:` | i18n     | 国际化        | 否         |
+| Emoji | 代码                       | 类型       | 说明        | 触发发布？ |
+| ----- | ------------------------ | -------- | --------- | ----- |
+| ✨     | `:sparkles:`             | feat     | 新功能       | 是     |
+| 🐛    | `:bug:`                  | fix      | Bug 修复    | 是     |
+| 📝    | `:memo:`                 | docs     | 文档更新      | 否     |
+| 💄    | `:lipstick:`             | style    | UI / 样式更改 | 否     |
+| ♻️    | `:recycle:`              | refactor | 代码重构      | 否     |
+| ✅     | `:white_check_mark:`     | test     | 测试相关      | 否     |
+| 🔨    | `:hammer:`               | chore    | 维护任务      | 否     |
+| 🚀    | `:rocket:`               | perf     | 性能优化      | 否     |
+| 🌐    | `:globe_with_meridians:` | i18n     | 国际化       | 否     |
 
 ### 如何贡献
 

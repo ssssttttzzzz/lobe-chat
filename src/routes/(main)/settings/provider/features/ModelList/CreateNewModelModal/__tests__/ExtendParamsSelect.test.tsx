@@ -1,9 +1,32 @@
 import { describe, expect, it } from 'vitest';
 
+import { normalizeExtendParamsValue } from '../ExtendParamsSelect';
+
 // Import the constant directly for testing
 // We'll need to test the TITLE_KEY_ALIASES logic
 
 describe('ExtendParamsSelect', () => {
+  describe('normalizeExtendParamsValue', () => {
+    const definitionMap = new Map([
+      ['enableReasoning', { key: 'enableReasoning' }],
+      ['reasoningBudgetToken', { key: 'reasoningBudgetToken' }],
+    ]) as any;
+
+    it('should keep an explicit empty array when cleared', () => {
+      expect(normalizeExtendParamsValue([], definitionMap)).toEqual([]);
+      expect(normalizeExtendParamsValue(undefined, definitionMap)).toEqual([]);
+    });
+
+    it('should filter unsupported extend params while keeping valid values', () => {
+      expect(
+        normalizeExtendParamsValue(
+          ['enableReasoning', 'unsupportedParam', 'reasoningBudgetToken'] as any,
+          definitionMap,
+        ),
+      ).toEqual(['enableReasoning', 'reasoningBudgetToken']);
+    });
+  });
+
   describe('TITLE_KEY_ALIASES mapping', () => {
     // This mapping should be synced with ControlsForm.tsx
     const TITLE_KEY_ALIASES: Record<string, string> = {
@@ -11,6 +34,7 @@ describe('ExtendParamsSelect', () => {
       gpt5_1ReasoningEffort: 'reasoningEffort',
       gpt5_2ProReasoningEffort: 'reasoningEffort',
       gpt5_2ReasoningEffort: 'reasoningEffort',
+      glm5_2ReasoningEffort: 'reasoningEffort',
       thinkingLevel2: 'thinkingLevel',
     };
 
@@ -19,6 +43,10 @@ describe('ExtendParamsSelect', () => {
       expect(TITLE_KEY_ALIASES['gpt5_1ReasoningEffort']).toBe('reasoningEffort');
       expect(TITLE_KEY_ALIASES['gpt5_2ReasoningEffort']).toBe('reasoningEffort');
       expect(TITLE_KEY_ALIASES['gpt5_2ProReasoningEffort']).toBe('reasoningEffort');
+    });
+
+    it('should map GLM-5.2 variant to reasoningEffort', () => {
+      expect(TITLE_KEY_ALIASES['glm5_2ReasoningEffort']).toBe('reasoningEffort');
     });
 
     it('should map thinkingLevel2 to thinkingLevel', () => {
@@ -38,6 +66,7 @@ describe('ExtendParamsSelect', () => {
       gpt5_1ReasoningEffort: 'reasoningEffort',
       gpt5_2ProReasoningEffort: 'reasoningEffort',
       gpt5_2ReasoningEffort: 'reasoningEffort',
+      glm5_2ReasoningEffort: 'reasoningEffort',
       thinkingLevel2: 'thinkingLevel',
     };
 
@@ -47,6 +76,7 @@ describe('ExtendParamsSelect', () => {
 
     it('should return the alias key when available', () => {
       expect(getTitleKey('gpt5ReasoningEffort')).toBe('reasoningEffort');
+      expect(getTitleKey('glm5_2ReasoningEffort')).toBe('reasoningEffort');
       expect(getTitleKey('thinkingLevel2')).toBe('thinkingLevel');
     });
 

@@ -1,3 +1,4 @@
+import { type OpenAIChatMessage } from '@lobechat/types';
 import { type IEditor, type SlashOptions } from '@lobehub/editor';
 import { type ChatInputProps } from '@lobehub/editor/react';
 import { type MenuProps } from '@lobehub/ui';
@@ -27,10 +28,37 @@ export const initialSendButtonState: SendButtonProps = {
 
 export type SlashPlacement = 'top' | 'bottom';
 
+export interface ContextWindowMessage {
+  content: string;
+}
+
+export interface ChatInputFeature {
+  inputCompletion?: boolean;
+  mention?: boolean;
+  slash?: boolean;
+}
+
+export interface InputCompletionError {
+  body?: unknown;
+  errorType?: string;
+  httpStatus?: number;
+  message: string;
+}
+
+export const DEFAULT_CHAT_INPUT_FEATURE = {
+  inputCompletion: true,
+  mention: true,
+  slash: true,
+} as const satisfies Required<ChatInputFeature>;
+
 export interface PublicState {
   agentId?: string;
   allowExpand?: boolean;
+  contextWindowMessages?: ContextWindowMessage[];
+  draftKey?: string;
   expand?: boolean;
+  feature?: ChatInputFeature;
+  getMessages?: () => OpenAIChatMessage[];
   leftActions: ActionKeys[];
   mentionItems?: SlashOptions['items'];
   mobile?: boolean;
@@ -47,7 +75,10 @@ export interface PublicState {
 }
 
 export interface State extends PublicState {
+  _savedEditorState?: Record<string, any>;
   editor?: IEditor;
+  inputCompletionError?: InputCompletionError;
+  inputCompletionErrorDismissed: boolean;
   isContentEmpty: boolean;
   markdownContent: string;
   slashMenuRef: ChatInputProps['slashMenuRef'];
@@ -56,6 +87,8 @@ export interface State extends PublicState {
 export const initialState: State = {
   allowExpand: true,
   expand: false,
+  feature: DEFAULT_CHAT_INPUT_FEATURE,
+  inputCompletionErrorDismissed: false,
   isContentEmpty: false,
   leftActions: [],
   markdownContent: '',

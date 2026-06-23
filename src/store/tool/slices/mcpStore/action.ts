@@ -1,5 +1,5 @@
 import { CURRENT_VERSION, isDesktop } from '@lobechat/const';
-import { type LobeChatPluginManifest } from '@lobehub/chat-plugin-sdk';
+import { type ToolManifest } from '@lobechat/types';
 import { type PluginItem, type PluginListResponse } from '@lobehub/market-sdk';
 import { type TRPCClientError } from '@trpc/client';
 import debug from 'debug';
@@ -11,6 +11,7 @@ import useSWR from 'swr';
 
 import { type MCPErrorData } from '@/libs/mcp/types';
 import { parseStdioErrorMessage } from '@/libs/mcp/types';
+import { toolKeys } from '@/libs/swr/keys';
 import { discoverService } from '@/services/discover';
 import { mcpService } from '@/services/mcp';
 import { pluginService } from '@/services/plugin';
@@ -73,7 +74,7 @@ const toNonEmptyStringRecord = (input?: Record<string, any>) => {
 const buildCloudMcpManifest = (params: {
   data: any;
   plugin: { description?: string; icon?: string; identifier: string };
-}): LobeChatPluginManifest => {
+}): ToolManifest => {
   const { data, plugin } = params;
 
   log('Using cloud connection, building manifest from market data');
@@ -104,7 +105,7 @@ const buildCloudMcpManifest = (params: {
   }
 
   // Build complete manifest
-  const manifest: LobeChatPluginManifest = {
+  const manifest: ToolManifest = {
     api: apiArray,
     author: data.author?.name || data.author || '',
     createAt: data.createdAt || new Date().toISOString(),
@@ -120,7 +121,7 @@ const buildCloudMcpManifest = (params: {
     name: data.name || plugin.identifier,
     type: 'mcp',
     version: data.version,
-  } as unknown as LobeChatPluginManifest;
+  } as unknown as ToolManifest;
 
   log('[Cloud MCP] Final manifest built:', {
     apiCount: manifest.api?.length,
@@ -136,7 +137,7 @@ export interface TestMcpConnectionResult {
   error?: string;
   /** STDIO process output logs for debugging */
   errorLog?: string;
-  manifest?: LobeChatPluginManifest;
+  manifest?: ToolManifest;
   success: boolean;
 }
 
@@ -470,7 +471,7 @@ export class PluginMCPStoreActionImpl {
         return;
       }
 
-      let manifest: LobeChatPluginManifest | undefined;
+      let manifest: ToolManifest | undefined;
 
       if (connection?.type === 'stdio') {
         manifest = await mcpService.getStdioMcpServerManifest(
@@ -750,7 +751,7 @@ export class PluginMCPStoreActionImpl {
     );
 
     try {
-      let manifest: LobeChatPluginManifest;
+      let manifest: ToolManifest;
 
       if (connection.type === 'http') {
         if (!connection.url) {
@@ -864,21 +865,15 @@ export class PluginMCPStoreActionImpl {
     const requestParams = isDesktop
       ? params
       : { ...params, connectionType: McpConnectionType.http };
-    const swrKeyParts = [
-      'useFetchMCPPluginList',
-      locale,
-      requestParams.page,
-      requestParams.pageSize,
-      requestParams.q,
-      requestParams.connectionType,
-    ];
-    const swrKey = swrKeyParts
-      .filter((part) => part !== undefined && part !== null && part !== '')
-      .join('-');
     const page = requestParams.page ?? 1;
 
     return useSWR<PluginListResponse>(
-      swrKey,
+      toolKeys.mcpPluginList(locale, {
+        connectionType: requestParams.connectionType,
+        page: requestParams.page,
+        pageSize: requestParams.pageSize,
+        q: requestParams.q,
+      }),
       () => discoverService.getMCPPluginList(requestParams),
       {
         onSuccess: (data) => {

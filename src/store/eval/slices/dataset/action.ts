@@ -1,65 +1,60 @@
 import isEqual from 'fast-deep-equal';
-import  { type SWRResponse } from 'swr';
-import  { type StateCreator } from 'zustand/vanilla';
+import { type SWRResponse } from 'swr';
 
 import { mutate, useClientDataSWR } from '@/libs/swr';
+import { evalKeys } from '@/libs/swr/keys';
 import { agentEvalService } from '@/services/agentEval';
-import  { type EvalStore } from '@/store/eval/store';
+import { type EvalStore } from '@/store/eval/store';
+import { type StoreSetter } from '@/store/types';
 
-import { type DatasetDetailDispatch,datasetDetailReducer } from './reducer';
+import { type DatasetDetailDispatch, datasetDetailReducer } from './reducer';
 
-const FETCH_DATASETS_KEY = 'FETCH_DATASETS';
-const FETCH_DATASET_DETAIL_KEY = 'FETCH_DATASET_DETAIL';
+type Setter = StoreSetter<EvalStore>;
 
-export interface DatasetAction {
-  // Internal methods
-  internal_dispatchDatasetDetail: (payload: DatasetDetailDispatch) => void;
-  internal_updateDatasetDetailLoading: (id: string, loading: boolean) => void;
-  refreshDatasetDetail: (id: string) => Promise<void>;
-  refreshDatasets: (benchmarkId: string) => Promise<void>;
+export const createDatasetSlice = (set: Setter, get: () => EvalStore, _api?: unknown) =>
+  new DatasetActionImpl(set, get, _api);
 
-  useFetchDatasetDetail: (id?: string) => SWRResponse;
-  useFetchDatasets: (benchmarkId?: string) => SWRResponse;
-}
+export class DatasetActionImpl {
+  readonly #get: () => EvalStore;
+  readonly #set: Setter;
 
-export const createDatasetSlice: StateCreator<
-  EvalStore,
-  [['zustand/devtools', never]],
-  [],
-  DatasetAction
-> = (set, get) => ({
-  refreshDatasetDetail: async (id) => {
-    await mutate([FETCH_DATASET_DETAIL_KEY, id]);
-  },
+  constructor(set: Setter, get: () => EvalStore, _api?: unknown) {
+    void _api;
+    this.#set = set;
+    this.#get = get;
+  }
 
-  refreshDatasets: async (benchmarkId) => {
-    await mutate([FETCH_DATASETS_KEY, benchmarkId]);
-  },
+  refreshDatasetDetail = async (id: string): Promise<void> => {
+    await mutate(evalKeys.datasetDetail(id));
+  };
 
-  useFetchDatasetDetail: (id) => {
-    return useClientDataSWR(
-      id ? [FETCH_DATASET_DETAIL_KEY, id] : null,
+  refreshDatasets = async (benchmarkId: string): Promise<void> => {
+    await mutate(evalKeys.datasets(benchmarkId));
+  };
+
+  useFetchDatasetDetail = (id?: string): SWRResponse =>
+    useClientDataSWR(
+      id ? evalKeys.datasetDetail(id) : null,
       () => agentEvalService.getDataset(id!),
       {
         onSuccess: (data: any) => {
-          get().internal_dispatchDatasetDetail({
-            type: 'setDatasetDetail',
+          this.#get().internal_dispatchDatasetDetail({
             id: id!,
+            type: 'setDatasetDetail',
             value: data,
           });
-          get().internal_updateDatasetDetailLoading(id!, false);
+          this.#get().internal_updateDatasetDetailLoading(id!, false);
         },
       },
     );
-  },
 
-  useFetchDatasets: (benchmarkId) => {
-    return useClientDataSWR(
-      benchmarkId ? [FETCH_DATASETS_KEY, benchmarkId] : null,
+  useFetchDatasets = (benchmarkId?: string): SWRResponse =>
+    useClientDataSWR(
+      benchmarkId ? evalKeys.datasets(benchmarkId) : null,
       () => agentEvalService.listDatasets(benchmarkId!),
       {
         onSuccess: (data: any) => {
-          set(
+          this.#set(
             {
               datasetList: data,
               isLoadingDatasets: false,
@@ -70,22 +65,18 @@ export const createDatasetSlice: StateCreator<
         },
       },
     );
-  },
 
-  // Internal - Dispatch to reducer
-  internal_dispatchDatasetDetail: (payload) => {
-    const currentMap = get().datasetDetailMap;
+  internal_dispatchDatasetDetail = (payload: DatasetDetailDispatch): void => {
+    const currentMap = this.#get().datasetDetailMap;
     const nextMap = datasetDetailReducer(currentMap, payload);
 
-    // No need to update if map is the same
     if (isEqual(nextMap, currentMap)) return;
 
-    set({ datasetDetailMap: nextMap }, false, `dispatchDatasetDetail/${payload.type}`);
-  },
+    this.#set({ datasetDetailMap: nextMap }, false, `dispatchDatasetDetail/${payload.type}`);
+  };
 
-  // Internal - Update loading state for specific detail
-  internal_updateDatasetDetailLoading: (id, loading) => {
-    set(
+  internal_updateDatasetDetailLoading = (id: string, loading: boolean): void => {
+    this.#set(
       (state) => {
         if (loading) {
           return { loadingDatasetDetailIds: [...state.loadingDatasetDetailIds, id] };
@@ -97,5 +88,7 @@ export const createDatasetSlice: StateCreator<
       false,
       'updateDatasetDetailLoading',
     );
-  },
-});
+  };
+}
+
+export type DatasetAction = Pick<DatasetActionImpl, keyof DatasetActionImpl>;

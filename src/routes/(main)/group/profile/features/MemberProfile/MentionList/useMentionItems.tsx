@@ -1,9 +1,9 @@
-import { type KlavisServerType } from '@lobechat/const';
-import { KLAVIS_SERVER_TYPES } from '@lobechat/const';
+import { type ComposioAppType } from '@lobechat/const';
+import { COMPOSIO_APP_TYPES } from '@lobechat/const';
 import { ToolNameResolver } from '@lobechat/context-engine';
 import { type API } from '@lobechat/prompts';
 import { apiPrompt, toolPrompt } from '@lobechat/prompts';
-import { type LobeChatPluginManifest } from '@lobehub/chat-plugin-sdk';
+import { type ToolManifest } from '@lobechat/types';
 import { type IEditor } from '@lobehub/editor';
 import { INSERT_MENTION_COMMAND } from '@lobehub/editor';
 import { Icon, Image } from '@lobehub/ui';
@@ -13,6 +13,7 @@ import { memo, useCallback, useMemo } from 'react';
 
 import PluginAvatar from '@/components/Plugins/PluginAvatar';
 import { globalAgentContextManager } from '@/helpers/GlobalAgentContextManager';
+import { usePermission } from '@/hooks/usePermission';
 import { useAgentStore } from '@/store/agent';
 import { pluginHelpers, useToolStore } from '@/store/tool';
 import { toolSelectors } from '@/store/tool/selectors';
@@ -21,27 +22,27 @@ import { hydrationPrompt } from '@/utils/promptTemplate';
 import MentionDropdown from './MentionDropdown';
 import { type MentionListOption, type MentionMetadata } from './types';
 
-// 根据 identifier 获取 Klavis 服务器类型配置
-const getKlavisServerType = (identifier: string) =>
-  KLAVIS_SERVER_TYPES.find((type) => type.identifier === identifier);
+// Get Composio server type config by identifier
+const getComposioAppType = (identifier: string) =>
+  COMPOSIO_APP_TYPES.find((type) => type.identifier === identifier);
 
 /**
- * Klavis 服务器图标组件
- * 对于 string 类型的 icon，使用 Image 组件渲染
- * 对于 IconType 类型的 icon，使用 Icon 组件渲染，并根据主题设置填充色
+ * Composio server icon component
+ * For string type icon, renders using Image component
+ * For IconType type icon, renders using Icon component and sets fill color based on theme
  */
-const KlavisIcon = memo<Pick<KlavisServerType, 'icon' | 'label'>>(({ icon, label }) => {
+const ComposioIcon = memo<Pick<ComposioAppType, 'icon' | 'label'>>(({ icon, label }) => {
   if (typeof icon === 'string') {
     return <Image alt={label} height={20} src={icon} style={{ flex: 'none' }} width={20} />;
   }
 
-  // 使用主题色填充，在深色模式下自动适应
+  // Fill with theme color, automatically adapts in dark mode
   return <Icon fill={cssVar.colorText} icon={icon} size={20} />;
 });
 
 const toolNameResolver = new ToolNameResolver();
 
-const buildApiList = (identifier: string, manifest?: LobeChatPluginManifest): API[] => {
+const buildApiList = (identifier: string, manifest?: ToolManifest): API[] => {
   if (!manifest?.api) return [];
 
   return manifest.api.map((api) => ({
@@ -58,7 +59,7 @@ const hydrateSystemRole = (systemRole?: string) => {
 
 const resolveInstructions = (
   metadata: MentionMetadata,
-  manifest?: LobeChatPluginManifest,
+  manifest?: ToolManifest,
   fallbackDesc?: string,
 ) => {
   if (metadata.instructions) return metadata.instructions;
@@ -70,7 +71,7 @@ const resolveInstructions = (
 
 const resolveApiName = (
   metadata: MentionMetadata,
-  manifest: LobeChatPluginManifest | undefined,
+  manifest: ToolManifest | undefined,
   pluginId?: string,
   fallbackLabel?: string,
 ) => {
@@ -93,7 +94,7 @@ const resolveApiName = (
 
 const resolveApiDescription = (
   metadata: MentionMetadata,
-  manifest: LobeChatPluginManifest | undefined,
+  manifest: ToolManifest | undefined,
   pluginId: string | undefined,
   apiName?: string,
 ) => {
@@ -112,6 +113,7 @@ const resolveApiDescription = (
 };
 
 const useMentionOptions = () => {
+  const { allowed: canEdit } = usePermission('edit_own_content');
   const installedTools = useToolStore(toolSelectors.metaList, isEqual);
   const toggleAgentPlugin = useAgentStore((s) => s.toggleAgentPlugin);
 
@@ -133,10 +135,10 @@ const useMentionOptions = () => {
         type: 'collection',
       });
 
-      // 优先使用 Klavis 图标，否则使用 PluginAvatar
-      const klavisServerType = getKlavisServerType(tool.identifier);
-      const icon = klavisServerType ? (
-        <KlavisIcon icon={klavisServerType.icon} label={klavisServerType.label} />
+      // Prefer Composio icon, fall back to PluginAvatar
+      const composioServerType = getComposioAppType(tool.identifier);
+      const icon = composioServerType ? (
+        <ComposioIcon icon={composioServerType.icon} label={composioServerType.label} />
       ) : (
         <PluginAvatar alt={label} avatar={pluginHelpers.getPluginAvatar(tool.meta)} size={20} />
       );
@@ -148,6 +150,8 @@ const useMentionOptions = () => {
         label,
         metadata: createMetadata(),
         onSelect: (editor: IEditor) => {
+          if (!canEdit) return;
+
           toggleAgentPlugin(tool.identifier, true);
           editor.dispatchCommand(INSERT_MENTION_COMMAND, {
             label,
@@ -156,7 +160,7 @@ const useMentionOptions = () => {
         },
       };
     });
-  }, [installedTools, toggleAgentPlugin]);
+  }, [canEdit, installedTools, toggleAgentPlugin]);
 
   const loadItems = useCallback(
     async (

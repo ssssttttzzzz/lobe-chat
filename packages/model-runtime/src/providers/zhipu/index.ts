@@ -9,6 +9,9 @@ import { OpenAIStream } from '../../core/streams/openai';
 import { convertIterableToStream } from '../../core/streams/protocol';
 import { getModelMaxOutputs } from '../../utils/getModelMaxOutputs';
 import { MODEL_LIST_CONFIGS, processModelList } from '../../utils/modelParse';
+import { createZhipuImage } from './createImage';
+import { createZhipuVideo } from './createVideo';
+import { isToolStreamSupportedGLMModel } from './glmModelId';
 
 export interface ZhipuModelCard {
   description: string;
@@ -24,6 +27,7 @@ export const params = {
         enabledSearch,
         max_tokens,
         model,
+        preserveThinking,
         stream,
         temperature,
         thinking,
@@ -31,6 +35,35 @@ export const params = {
         top_p,
         ...rest
       } = payload;
+
+      const messages = (rest.messages || []).map((message: any) => {
+        const { reasoning, ...messageRest } = message;
+
+        const reasoningContent =
+          typeof messageRest.reasoning_content === 'string'
+            ? messageRest.reasoning_content
+            : typeof reasoning?.content === 'string'
+              ? reasoning.content
+              : undefined;
+
+        if (reasoningContent !== undefined) {
+          return {
+            ...messageRest,
+            reasoning_content: reasoningContent,
+          };
+        }
+
+        return messageRest;
+      });
+
+      const shouldSetClearThinking = typeof preserveThinking === 'boolean';
+      const thinkingPayload = thinking ? { type: thinking.type } : undefined;
+      const resolvedThinking = shouldSetClearThinking
+        ? {
+            ...thinkingPayload,
+            clear_thinking: !preserveThinking,
+          }
+        : thinkingPayload;
 
       const zhipuTools = enabledSearch
         ? [
@@ -76,10 +109,11 @@ export const params = {
       return {
         ...rest,
         ...resolvedParams,
+        messages,
         model,
         stream,
-        thinking: thinking ? { type: thinking.type } : undefined,
-        tool_stream: stream && /^glm-(?:4\.(?:6|7)|5)$/.test(model) ? true : undefined,
+        thinking: resolvedThinking,
+        tool_stream: stream && isToolStreamSupportedGLMModel(model) ? true : undefined,
         tools: zhipuTools,
       } as any;
     },
@@ -140,6 +174,15 @@ export const params = {
         payload,
       });
     },
+  },
+  createImage: createZhipuImage,
+  createVideo: createZhipuVideo,
+  handlePollVideoStatus: async (inferenceId, options) => {
+    const { pollZhipuVideoStatus } = await import('./createVideo');
+    return pollZhipuVideoStatus(inferenceId, {
+      apiKey: options.apiKey,
+      baseURL: options.baseURL || '',
+    });
   },
   debug: {
     chatCompletion: () => process.env.DEBUG_ZHIPU_CHAT_COMPLETION === '1',

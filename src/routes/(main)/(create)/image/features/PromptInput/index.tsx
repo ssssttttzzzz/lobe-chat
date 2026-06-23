@@ -1,16 +1,19 @@
 'use client';
 
 import { ModelIcon } from '@lobehub/icons';
-import { ActionIcon, Flexbox, Text } from '@lobehub/ui';
+import { ActionIcon, Flexbox, Segmented, Text } from '@lobehub/ui';
+import { Divider, Switch } from 'antd';
 import { Images } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { loginRequired } from '@/components/Error/loginRequiredNotification';
 import Action from '@/features/ChatInput/ActionBar/components/Action';
 import ModelSwitchPanel from '@/features/ModelSwitchPanel';
+import PromptTransformAction from '@/features/PromptTransform/PromptTransformAction';
 import { useFetchAiImageConfig } from '@/hooks/useFetchAiImageConfig';
 import { useIsDark } from '@/hooks/useIsDark';
+import { usePermission } from '@/hooks/usePermission';
 import { useQueryState } from '@/hooks/useQueryParam';
 import {
   ConfigAction,
@@ -49,9 +52,79 @@ interface PromptInputProps {
 
 const isSupportedParamSelector = imageGenerationConfigSelectors.isSupportedParam;
 
+interface SwitchItemProps {
+  label: string;
+  paramName: 'watermark' | 'webSearch';
+}
+
+const SwitchItem = memo<SwitchItemProps>(({ label, paramName }) => {
+  const { allowed: canCreate } = usePermission('create_content');
+  const { value, setValue } = useGenerationConfigParam(paramName);
+
+  return (
+    <Flexbox horizontal align="center" justify="space-between" padding={'0 2px'}>
+      <Text weight={500}>{label}</Text>
+      <Switch
+        checked={!!value}
+        disabled={!canCreate}
+        onChange={(checked) => {
+          if (!canCreate) return;
+
+          setValue(checked as any);
+        }}
+      />
+    </Flexbox>
+  );
+});
+
+const PromptExtendItem = memo(() => {
+  const { t } = useTranslation('image');
+  const { allowed: canCreate } = usePermission('create_content');
+  const { value, setValue, enumValues } = useGenerationConfigParam('promptExtend');
+
+  if (enumValues && enumValues.length > 0) {
+    const options = enumValues.map((item) => ({ label: item, value: item }));
+
+    return (
+      <Flexbox gap={6}>
+        <Text weight={500}>{t('config.promptExtend.label')}</Text>
+        <Segmented
+          block
+          disabled={!canCreate}
+          options={options}
+          style={{ width: '100%' }}
+          value={value as string}
+          variant="filled"
+          onChange={(next) => {
+            if (!canCreate) return;
+
+            setValue(String(next) as any);
+          }}
+        />
+      </Flexbox>
+    );
+  }
+
+  return (
+    <Flexbox horizontal align="center" justify="space-between" padding={'0 2px'}>
+      <Text weight={500}>{t('config.promptExtend.label')}</Text>
+      <Switch
+        checked={!!value}
+        disabled={!canCreate}
+        onChange={(checked) => {
+          if (!canCreate) return;
+
+          setValue(checked as any);
+        }}
+      />
+    </Flexbox>
+  );
+});
+
 const PromptInput = ({ showTitle = false }: PromptInputProps) => {
   const isDarkMode = useIsDark();
   const { t } = useTranslation('image');
+  const { allowed: canCreate } = usePermission('create_content');
   const { value, setValue } = useGenerationConfigParam('prompt');
   const { value: imageUrl, setValue: setImageUrl } = useGenerationConfigParam('imageUrl');
   const {
@@ -75,6 +148,9 @@ const PromptInput = ({ showTitle = false }: PromptInputProps) => {
   const isSupportSeed = useImageStore(isSupportedParamSelector('seed'));
   const isSupportSteps = useImageStore(isSupportedParamSelector('steps'));
   const isSupportCfg = useImageStore(isSupportedParamSelector('cfg'));
+  const isSupportPromptExtend = useImageStore(isSupportedParamSelector('promptExtend'));
+  const isSupportWatermark = useImageStore(isSupportedParamSelector('watermark'));
+  const isSupportWebSearch = useImageStore(isSupportedParamSelector('webSearch'));
   const isLogin = useUserStore(authSelectors.isLogin);
   const enabledImageModelList = useAiInfraStore(aiProviderSelectors.enabledImageModelList);
   const { showDimensionControl } = useDimensionControl();
@@ -88,6 +164,8 @@ const PromptInput = ({ showTitle = false }: PromptInputProps) => {
   const hasProcessedModel = useRef(false);
 
   const handleGenerate = async () => {
+    if (!canCreate) return;
+
     if (!isLogin) {
       loginRequired.redirect({ timeout: 2000 });
       return;
@@ -114,17 +192,21 @@ const PromptInput = ({ showTitle = false }: PromptInputProps) => {
   }, [modelParam, isInit, enabledImageModelList, setModelAndProviderOnSelect, setModelParam]);
 
   useEffect(() => {
-    if (promptParam && !hasProcessedPrompt.current && isLogin) {
+    if (promptParam && !hasProcessedPrompt.current && isLogin && canCreate) {
       const decodedPrompt = decodeURIComponent(promptParam);
       setValue(decodedPrompt);
       hasProcessedPrompt.current = true;
       setPromptParam(null);
 
-      setTimeout(async () => {
+      const timeoutId = window.setTimeout(async () => {
         await createImage();
       }, 100);
+
+      return () => {
+        window.clearTimeout(timeoutId);
+      };
     }
-  }, [promptParam, isLogin, setValue, setPromptParam, createImage]);
+  }, [promptParam, isLogin, canCreate, setValue, setPromptParam, createImage]);
 
   const imagePreviewUrls = useMemo(
     () => [imageUrl, ...(imageUrls ?? [])].filter(Boolean) as string[],
@@ -133,6 +215,8 @@ const PromptInput = ({ showTitle = false }: PromptInputProps) => {
 
   const handleAddImage = useCallback(
     (data: string | { dimensions?: { height: number; width: number }; url: string }) => {
+      if (!canCreate) return;
+
       const { url, dimensions } = extractUrlAndDimensions(data);
       if (!url) return;
 
@@ -157,18 +241,21 @@ const PromptInput = ({ showTitle = false }: PromptInputProps) => {
       setImageUrls,
       autoSetDimensions,
       extractUrlAndDimensions,
+      canCreate,
     ],
   );
 
   const handleRemoveImage = useCallback(
     (url: string) => {
+      if (!canCreate) return;
+
       if (url === imageUrl) {
         setImageUrl(null);
       } else {
         setImageUrls((imageUrls ?? []).filter((item) => item !== url) as any);
       }
     },
-    [imageUrl, imageUrls, setImageUrl, setImageUrls],
+    [canCreate, imageUrl, imageUrls, setImageUrl, setImageUrls],
   );
 
   const showInlineRef = isSupportImageUrl || isSupportImageUrls;
@@ -186,6 +273,7 @@ const PromptInput = ({ showTitle = false }: PromptInputProps) => {
       {showTitle && <PromptTitle />}
       <GenerationPromptInput
         disableGenerate={!isInit}
+        disabled={!canCreate}
         generateLabel={t('generation.actions.generate')}
         generatingLabel={t('generation.status.generating')}
         isCreating={isCreating}
@@ -203,7 +291,12 @@ const PromptInput = ({ showTitle = false }: PromptInputProps) => {
           ) : undefined
         }
         leftActions={
-          <Flexbox horizontal align={'center'} gap={4}>
+          <Flexbox
+            horizontal
+            align={'center'}
+            gap={4}
+            style={canCreate ? undefined : { opacity: 0.5, pointerEvents: 'none' }}
+          >
             <GenerationMediaModeSegment mode={'image'} />
             <ModelSwitchPanel
               ModelItemComponent={ImageModelItem}
@@ -214,6 +307,8 @@ const PromptInput = ({ showTitle = false }: PromptInputProps) => {
               pricingMode="image"
               provider={currentProvider ?? undefined}
               onModelChange={async ({ model, provider }) => {
+                if (!canCreate) return;
+
                 setModelAndProviderOnSelect(model, provider);
               }}
             >
@@ -266,6 +361,16 @@ const PromptInput = ({ showTitle = false }: PromptInputProps) => {
                       <SeedNumberInput />
                     </Flexbox>
                   )}
+                  {(isSupportWatermark || isSupportPromptExtend || isSupportWebSearch) && (
+                    <Divider style={{ marginBlock: 4 }} />
+                  )}
+                  {isSupportWatermark && (
+                    <SwitchItem label={t('config.watermark.label')} paramName={'watermark'} />
+                  )}
+                  {isSupportPromptExtend && <PromptExtendItem />}
+                  {isSupportWebSearch && (
+                    <SwitchItem label={t('config.webSearch.label')} paramName={'webSearch'} />
+                  )}
                 </Flexbox>
               }
             />
@@ -283,6 +388,17 @@ const PromptInput = ({ showTitle = false }: PromptInputProps) => {
         }
         placeholder={
           hasRefImages ? t('config.prompt.placeholderWithRef') : t('config.prompt.placeholder')
+        }
+        rightActions={
+          <PromptTransformAction
+            mode={'image'}
+            prompt={value}
+            onPromptChange={(next) => {
+              if (!canCreate) return;
+
+              setValue(next as any);
+            }}
+          />
         }
         onGenerate={handleGenerate}
         onValueChange={setValue}

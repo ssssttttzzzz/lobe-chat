@@ -157,10 +157,92 @@ export const AgentManagementManifest: BuiltinToolManifest = {
       },
     },
 
+    {
+      description:
+        'Get the detailed configuration and metadata of an agent, including its system prompt, model, provider, plugins, and other settings.',
+      name: AgentManagementApiName.getAgentDetail,
+      parameters: {
+        properties: {
+          agentId: {
+            description: 'The ID of the agent to get details for',
+            type: 'string',
+          },
+        },
+        required: ['agentId'],
+        type: 'object',
+      },
+    },
+    {
+      description:
+        'Duplicate an existing agent to create a copy with the same configuration. Optionally provide a new title for the duplicated agent.',
+      name: AgentManagementApiName.duplicateAgent,
+      parameters: {
+        properties: {
+          agentId: {
+            description: 'The ID of the agent to duplicate',
+            type: 'string',
+          },
+          newTitle: {
+            description:
+              'Optional new title for the duplicated agent. If not provided, the original title with a "Copy" suffix will be used.',
+            type: 'string',
+          },
+        },
+        required: ['agentId'],
+        type: 'object',
+      },
+    },
+    {
+      description:
+        "Install a plugin/tool for an agent. Use 'official' source for builtin tools, Composio integrations, and LobehubSkill providers. Use 'market' source for MCP marketplace plugins.",
+      name: AgentManagementApiName.installPlugin,
+      parameters: {
+        properties: {
+          agentId: {
+            description: 'The ID of the agent to install the plugin for',
+            type: 'string',
+          },
+          identifier: {
+            description: 'The plugin identifier to install',
+            type: 'string',
+          },
+          source: {
+            description:
+              "Plugin source: 'official' (builtin tools, Composio, LobehubSkill) or 'market' (MCP marketplace)",
+            enum: ['official', 'market'],
+            type: 'string',
+          },
+        },
+        required: ['agentId', 'identifier', 'source'],
+        type: 'object',
+      },
+    },
+
+    // ==================== Prompt ====================
+    {
+      description:
+        "Update an agent's system prompt. Use this instead of updateAgent when you only need to change the system prompt — it's simpler, avoids nested config objects, and clears stale editor data automatically.",
+      name: AgentManagementApiName.updatePrompt,
+      parameters: {
+        properties: {
+          agentId: {
+            description: 'The ID of the agent to update the prompt for',
+            type: 'string',
+          },
+          prompt: {
+            description: 'The new system prompt content',
+            type: 'string',
+          },
+        },
+        required: ['agentId', 'prompt'],
+        type: 'object',
+      },
+    },
+
     // ==================== Search ====================
     {
       description:
-        "Search for agents in your workspace or the marketplace. Use 'user' source to find your own agents, 'market' for marketplace agents, or 'all' for both.",
+        "Search for agents in your workspace or the marketplace. Use 'user' source to find your own agents, 'market' for marketplace agents, or 'all' for both. Results are paginated: the response reports the real total, and you can page through workspace agents with 'offset'.",
       name: AgentManagementApiName.searchAgent,
       parameters: {
         properties: {
@@ -182,6 +264,12 @@ export const AgentManagementManifest: BuiltinToolManifest = {
           limit: {
             default: 10,
             description: 'Maximum number of results to return (default: 10, max: 20)',
+            type: 'number',
+          },
+          offset: {
+            default: 0,
+            description:
+              'Number of workspace agents to skip, for pagination (e.g. offset=20 with limit=20 returns agents 21-40). Not applied to marketplace results.',
             type: 'number',
           },
         },

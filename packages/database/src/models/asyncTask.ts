@@ -1,40 +1,56 @@
 import { ASYNC_TASK_TIMEOUT } from '@lobechat/business-config/server';
-import type { AsyncTaskType, UserMemoryExtractionMetadata } from '@lobechat/types';
-import { AsyncTaskError, AsyncTaskErrorType, AsyncTaskStatus } from '@lobechat/types';
+import type { UserMemoryExtractionMetadata } from '@lobechat/types';
+import {
+  AsyncTaskError,
+  AsyncTaskErrorType,
+  AsyncTaskStatus,
+  AsyncTaskType,
+} from '@lobechat/types';
 import { and, eq, inArray, lt, or, sql } from 'drizzle-orm';
 
 import type { AsyncTaskSelectItem, NewAsyncTaskItem } from '../schemas';
 import { asyncTasks } from '../schemas';
 import type { LobeChatDatabase } from '../type';
+import { buildWorkspacePayload, buildWorkspaceWhere } from '../utils/workspace';
 
 export class AsyncTaskModel {
   private userId: string;
   private db: LobeChatDatabase;
+  private workspaceId?: string;
 
-  constructor(db: LobeChatDatabase, userId: string) {
+  constructor(db: LobeChatDatabase, userId: string, workspaceId?: string) {
     this.userId = userId;
     this.db = db;
+    this.workspaceId = workspaceId;
   }
+
+  private ownership = () =>
+    buildWorkspaceWhere({ userId: this.userId, workspaceId: this.workspaceId }, asyncTasks);
 
   create = async (
     params: Pick<NewAsyncTaskItem, 'type' | 'status' | 'metadata' | 'parentId'>,
   ): Promise<string> => {
     const data = await this.db
       .insert(asyncTasks)
-      .values({ ...params, userId: this.userId })
+      .values(
+        buildWorkspacePayload(
+          { userId: this.userId, workspaceId: this.workspaceId },
+          { ...params },
+        ),
+      )
       .returning();
 
     return data[0].id;
   };
 
   delete = async (id: string) => {
-    return this.db
-      .delete(asyncTasks)
-      .where(and(eq(asyncTasks.id, id), eq(asyncTasks.userId, this.userId)));
+    return this.db.delete(asyncTasks).where(and(eq(asyncTasks.id, id), this.ownership()));
   };
 
   findById = async (id: string) => {
-    return this.db.query.asyncTasks.findFirst({ where: and(eq(asyncTasks.id, id)) });
+    return this.db.query.asyncTasks.findFirst({
+      where: and(eq(asyncTasks.id, id), this.ownership()),
+    });
   };
 
   static findByInferenceId = async (db: LobeChatDatabase, inferenceId: string) => {
@@ -47,13 +63,13 @@ export class AsyncTaskModel {
     return this.db
       .update(asyncTasks)
       .set({ ...value, updatedAt: new Date() })
-      .where(and(eq(asyncTasks.id, taskId)));
+      .where(and(eq(asyncTasks.id, taskId), this.ownership()));
   }
 
   findActiveByType = async (type: AsyncTaskType) => {
     return this.db.query.asyncTasks.findFirst({
       where: and(
-        eq(asyncTasks.userId, this.userId),
+        this.ownership(),
         eq(asyncTasks.type, type),
         inArray(asyncTasks.status, [AsyncTaskStatus.Pending, AsyncTaskStatus.Processing]),
       ),
@@ -84,6 +100,8 @@ export class AsyncTaskModel {
         `,
         status: sql`
           CASE
+            WHEN ${asyncTasks.status} = ${AsyncTaskStatus.Error} OR ${asyncTasks.error} IS NOT NULL
+              THEN ${AsyncTaskStatus.Error}
             WHEN ${totalExpr} IS NOT NULL AND ${completedExpr} >= ${totalExpr}
               THEN ${AsyncTaskStatus.Success}
             ELSE ${AsyncTaskStatus.Processing}
@@ -91,7 +109,7 @@ export class AsyncTaskModel {
         `,
         updatedAt: new Date(),
       })
-      .where(and(eq(asyncTasks.id, taskId), eq(asyncTasks.userId, this.userId)))
+      .where(and(eq(asyncTasks.id, taskId), this.ownership()))
       .returning({ metadata: asyncTasks.metadata, status: asyncTasks.status });
 
     return result[0];
@@ -103,11 +121,22 @@ export class AsyncTaskModel {
     if (taskIds.length > 0) {
       await this.checkTimeoutTasks(taskIds);
       chunkTasks = await this.db.query.asyncTasks.findMany({
-        where: and(inArray(asyncTasks.id, taskIds), eq(asyncTasks.type, type)),
+        where: and(inArray(asyncTasks.id, taskIds), eq(asyncTasks.type, type), this.ownership()),
       });
     }
 
     return chunkTasks;
+  };
+
+  isUserMemoryExtractionCancellationRequested = async (taskId: string) => {
+    // NOTICE: Shared cancellation gate for cooperative cascading cancellation.
+    // Workflow stages call this before fan-out/heavy steps to stop the remaining task tree.
+    const task = await this.findById(taskId);
+    if (!task || task.userId !== this.userId) return false;
+    if (task.type !== AsyncTaskType.UserMemoryExtractionWithChatTopic) return false;
+
+    const metadata = task.metadata as UserMemoryExtractionMetadata | undefined;
+    return Boolean(metadata?.control?.cancelRequestedAt);
   };
 
   /**
@@ -120,6 +149,7 @@ export class AsyncTaskModel {
       .where(
         and(
           inArray(asyncTasks.id, ids),
+          this.ownership(),
           or(
             eq(asyncTasks.status, AsyncTaskStatus.Pending),
             eq(asyncTasks.status, AsyncTaskStatus.Processing),
@@ -139,9 +169,12 @@ export class AsyncTaskModel {
           status: AsyncTaskStatus.Error,
         })
         .where(
-          inArray(
-            asyncTasks.id,
-            tasks.map((item) => item.id),
+          and(
+            inArray(
+              asyncTasks.id,
+              tasks.map((item) => item.id),
+            ),
+            this.ownership(),
           ),
         );
     }
@@ -151,6 +184,18 @@ export class AsyncTaskModel {
 export const initUserMemoryExtractionMetadata = (
   metadata?: UserMemoryExtractionMetadata,
 ): UserMemoryExtractionMetadata => ({
+  control: metadata?.control
+    ? {
+        cancelReason: metadata.control.cancelReason,
+        cancelRequestedAt: metadata.control.cancelRequestedAt,
+        cancelledBy: metadata.control.cancelledBy,
+        upstash: metadata.control.upstash
+          ? {
+              workflowRunIds: metadata.control.upstash.workflowRunIds || [],
+            }
+          : undefined,
+      }
+    : undefined,
   progress: {
     completedTopics: metadata?.progress?.completedTopics ?? 0,
     totalTopics: metadata?.progress?.totalTopics ?? null,

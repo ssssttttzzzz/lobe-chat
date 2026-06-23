@@ -4,80 +4,109 @@ import { type App as AppCore } from '../../App';
 import Browser, { type BrowserWindowOpts } from '../Browser';
 
 // Use vi.hoisted to define mocks before hoisting
-const { mockBrowserWindow, mockNativeTheme, mockIpcMain, mockScreen, MockBrowserWindow } =
-  vi.hoisted(() => {
-    const mockBrowserWindow = {
-      center: vi.fn(),
-      close: vi.fn(),
-      focus: vi.fn(),
-      getBounds: vi.fn().mockReturnValue({ height: 600, width: 800, x: 0, y: 0 }),
-      getContentBounds: vi.fn().mockReturnValue({ height: 600, width: 800 }),
-      hide: vi.fn(),
-      isDestroyed: vi.fn().mockReturnValue(false),
-      isFocused: vi.fn().mockReturnValue(true),
-      isFullScreen: vi.fn().mockReturnValue(false),
-      isMaximized: vi.fn().mockReturnValue(false),
-      isVisible: vi.fn().mockReturnValue(true),
-      loadFile: vi.fn().mockResolvedValue(undefined),
-      loadURL: vi.fn().mockResolvedValue(undefined),
-      maximize: vi.fn(),
-      minimize: vi.fn(),
-      on: vi.fn(),
-      once: vi.fn(),
-      setBackgroundColor: vi.fn(),
-      setBounds: vi.fn(),
-      setFullScreen: vi.fn(),
-      setPosition: vi.fn(),
-      setTitleBarOverlay: vi.fn(),
-      show: vi.fn(),
-      unmaximize: vi.fn(),
-      webContents: {
-        openDevTools: vi.fn(),
-        send: vi.fn(),
-        session: {
-          webRequest: {
-            onBeforeSendHeaders: vi.fn(),
-            onHeadersReceived: vi.fn(),
-          },
+const {
+  mockAppModule,
+  mockBrowserWindow,
+  mockNativeTheme,
+  mockIpcMain,
+  mockShell,
+  mockScreen,
+  MockBrowserWindow,
+  mockEnv,
+} = vi.hoisted(() => {
+  const mockBrowserWindow = {
+    center: vi.fn(),
+    close: vi.fn(),
+    focus: vi.fn(),
+    getBounds: vi.fn().mockReturnValue({ height: 600, width: 800, x: 0, y: 0 }),
+    getContentBounds: vi.fn().mockReturnValue({ height: 600, width: 800 }),
+    hide: vi.fn(),
+    isDestroyed: vi.fn().mockReturnValue(false),
+    isFocused: vi.fn().mockReturnValue(true),
+    isFullScreen: vi.fn().mockReturnValue(false),
+    isMaximized: vi.fn().mockReturnValue(false),
+    isVisible: vi.fn().mockReturnValue(true),
+    loadFile: vi.fn().mockResolvedValue(undefined),
+    loadURL: vi.fn().mockResolvedValue(undefined),
+    maximize: vi.fn(),
+    minimize: vi.fn(),
+    on: vi.fn(),
+    once: vi.fn(),
+    setBackgroundColor: vi.fn(),
+    setBounds: vi.fn(),
+    setFullScreen: vi.fn(),
+    setPosition: vi.fn(),
+    setTitleBarOverlay: vi.fn(),
+    show: vi.fn(),
+    unmaximize: vi.fn(),
+    webContents: {
+      openDevTools: vi.fn(),
+      send: vi.fn(),
+      session: {
+        webRequest: {
+          onBeforeSendHeaders: vi.fn(),
+          onHeadersReceived: vi.fn(),
         },
-        on: vi.fn(),
-        setWindowOpenHandler: vi.fn(),
       },
-    };
+      on: vi.fn(),
+      setWindowOpenHandler: vi.fn(),
+    },
+  };
 
-    return {
-      MockBrowserWindow: vi.fn().mockImplementation(() => mockBrowserWindow),
-      mockBrowserWindow,
-      mockIpcMain: {
-        handle: vi.fn(),
-        removeHandler: vi.fn(),
+  return {
+    mockAppModule: {
+      dock: {
+        setBadge: vi.fn(),
+        show: vi.fn(),
       },
-      mockNativeTheme: {
-        off: vi.fn(),
-        on: vi.fn(),
-        shouldUseDarkColors: false,
-        themeSource: 'system',
-      },
-      mockScreen: {
-        getDisplayMatching: vi.fn().mockReturnValue({
-          workArea: { height: 1080, width: 1920, x: 0, y: 0 },
-        }),
-        getDisplayNearestPoint: vi.fn().mockReturnValue({
-          workArea: { height: 1080, width: 1920, x: 0, y: 0 },
-        }),
-        getPrimaryDisplay: vi.fn().mockReturnValue({
-          workArea: { height: 1080, width: 1920, x: 0, y: 0 },
-        }),
-      },
-    };
-  });
+      setActivationPolicy: vi.fn(),
+      setBadgeCount: vi.fn(),
+    },
+    MockBrowserWindow: vi.fn().mockImplementation(() => mockBrowserWindow),
+    mockBrowserWindow,
+    mockEnv: {
+      externalNavigationHosts: '',
+      isDev: false,
+      isLinux: false,
+      isMac: false,
+      isMacTahoe: false,
+      isWindows: true,
+    },
+    mockIpcMain: {
+      handle: vi.fn(),
+      removeHandler: vi.fn(),
+    },
+    mockNativeTheme: {
+      off: vi.fn(),
+      on: vi.fn(),
+      shouldUseDarkColors: false,
+      themeSource: 'system',
+    },
+    mockScreen: {
+      getDisplayMatching: vi.fn().mockReturnValue({
+        workArea: { height: 1080, width: 1920, x: 0, y: 0 },
+      }),
+      getDisplayNearestPoint: vi.fn().mockReturnValue({
+        workArea: { height: 1080, width: 1920, x: 0, y: 0 },
+      }),
+      getPrimaryDisplay: vi.fn().mockReturnValue({
+        workArea: { height: 1080, width: 1920, x: 0, y: 0 },
+      }),
+    },
+    mockShell: {
+      openExternal: vi.fn().mockResolvedValue(undefined),
+    },
+  };
+});
 
 // Mock electron
 vi.mock('electron', () => ({
+  app: mockAppModule,
   BrowserWindow: MockBrowserWindow,
   ipcMain: mockIpcMain,
   nativeTheme: mockNativeTheme,
   screen: mockScreen,
+  shell: mockShell,
 }));
 
 // Mock logger
@@ -98,11 +127,24 @@ vi.mock('@/const/dir', () => ({
 }));
 
 vi.mock('@/const/env', () => ({
-  isDev: false,
-  isLinux: false,
-  isMac: false,
-  isMacTahoe: false,
-  isWindows: true,
+  get DESKTOP_EXTERNAL_NAVIGATION_HOSTS() {
+    return mockEnv.externalNavigationHosts;
+  },
+  get isDev() {
+    return mockEnv.isDev;
+  },
+  get isLinux() {
+    return mockEnv.isLinux;
+  },
+  get isMac() {
+    return mockEnv.isMac;
+  },
+  get isMacTahoe() {
+    return mockEnv.isMacTahoe;
+  },
+  get isWindows() {
+    return mockEnv.isWindows;
+  },
 }));
 
 vi.mock('../../../const/theme', () => ({
@@ -145,6 +187,11 @@ describe('Browser', () => {
     mockBrowserWindow.loadURL.mockResolvedValue(undefined);
     mockBrowserWindow.loadFile.mockResolvedValue(undefined);
     mockNativeTheme.shouldUseDarkColors = false;
+    mockEnv.isLinux = false;
+    mockEnv.isMac = false;
+    mockEnv.isMacTahoe = false;
+    mockEnv.isWindows = true;
+    mockEnv.externalNavigationHosts = '';
 
     // Create mock App
     mockStoreManagerGet = vi.fn().mockReturnValue(undefined);
@@ -469,6 +516,19 @@ describe('Browser', () => {
 
         expect(mockBrowserWindow.show).toHaveBeenCalled();
       });
+
+      it('should restore regular activation policy when showing the main window on macOS', () => {
+        mockEnv.isMac = true;
+        mockEnv.isWindows = false;
+
+        const mainBrowser = new Browser({ ...defaultOptions, identifier: 'app' }, mockApp);
+        vi.spyOn(mainBrowser, 'loadUrl').mockResolvedValue(undefined as any);
+
+        mainBrowser.show();
+
+        expect(mockAppModule.setActivationPolicy).toHaveBeenCalledWith('regular');
+        expect(mockAppModule.dock.show).toHaveBeenCalled();
+      });
     });
 
     describe('hide', () => {
@@ -478,6 +538,30 @@ describe('Browser', () => {
         browser.hide();
 
         expect(mockBrowserWindow.hide).toHaveBeenCalled();
+      });
+    });
+
+    describe('fullscreen events', () => {
+      it('should broadcast fullscreen state changes', () => {
+        const enterHandler = mockBrowserWindow.on.mock.calls.find(
+          (call) => call[0] === 'enter-full-screen',
+        )?.[1];
+        const leaveHandler = mockBrowserWindow.on.mock.calls.find(
+          (call) => call[0] === 'leave-full-screen',
+        )?.[1];
+
+        expect(enterHandler).toBeDefined();
+        expect(leaveHandler).toBeDefined();
+
+        enterHandler();
+        expect(mockBrowserWindow.webContents.send).toHaveBeenCalledWith('windowFullscreenChanged', {
+          isFullScreen: true,
+        });
+
+        leaveHandler();
+        expect(mockBrowserWindow.webContents.send).toHaveBeenCalledWith('windowFullscreenChanged', {
+          isFullScreen: false,
+        });
       });
     });
 
@@ -678,6 +762,40 @@ describe('Browser', () => {
       willPreventUnloadHandler(mockEvent);
 
       expect(mockEvent.preventDefault).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('top-level navigation handling', () => {
+    let willNavigateHandler: (event: any, url: string) => void;
+
+    beforeEach(() => {
+      willNavigateHandler = mockBrowserWindow.webContents.on.mock.calls.find(
+        (call) => call[0] === 'will-navigate',
+      )?.[1];
+    });
+
+    it('should open configured external navigation hosts in system browser', () => {
+      mockEnv.externalNavigationHosts = 'stripe.com';
+      const mockEvent = { preventDefault: vi.fn() };
+
+      expect(willNavigateHandler).toBeDefined();
+      willNavigateHandler(mockEvent, 'https://checkout.stripe.com/c/pay/session_id');
+
+      expect(mockEvent.preventDefault).toHaveBeenCalled();
+      expect(mockShell.openExternal).toHaveBeenCalledWith(
+        'https://checkout.stripe.com/c/pay/session_id',
+      );
+    });
+
+    it('should allow internal result routes in the app window', () => {
+      mockEnv.externalNavigationHosts = 'stripe.com';
+      const mockEvent = { preventDefault: vi.fn() };
+
+      expect(willNavigateHandler).toBeDefined();
+      willNavigateHandler(mockEvent, 'http://localhost:3000/payment/upgrade-success');
+
+      expect(mockEvent.preventDefault).not.toHaveBeenCalled();
+      expect(mockShell.openExternal).not.toHaveBeenCalled();
     });
   });
 });

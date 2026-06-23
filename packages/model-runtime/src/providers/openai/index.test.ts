@@ -4,11 +4,16 @@ import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as debugStreamModule from '../../utils/debugStream';
+import * as getModelPricingModule from '../../utils/getModelPricing';
 import officalOpenAIModels from './fixtures/openai-models.json';
 import { LobeOpenAI, params } from './index';
 
 // Mock the console.error to avoid polluting test output
 vi.spyOn(console, 'error').mockImplementation(() => {});
+vi.spyOn(getModelPricingModule, 'getModelPricing').mockResolvedValue(undefined);
+vi.mock('@lobechat/business-model-bank/model-config', () => ({
+  loadModels: vi.fn().mockResolvedValue([]),
+}));
 
 // Mock fetch for most tests, but will be restored for real network tests
 const mockFetch = vi.fn();
@@ -86,6 +91,7 @@ describe('LobeOpenAI', () => {
               status: 400,
             },
             errorType: 'ProviderBizError',
+            message: expect.any(String),
             provider: 'openai',
           });
         }
@@ -124,6 +130,7 @@ describe('LobeOpenAI', () => {
               cause: { message: 'api is undefined' },
             },
             errorType: 'ProviderBizError',
+            message: expect.any(String),
             provider: 'openai',
           });
         }
@@ -158,6 +165,7 @@ describe('LobeOpenAI', () => {
               cause: { message: 'api is undefined' },
             },
             errorType: 'ProviderBizError',
+            message: expect.any(String),
             provider: 'openai',
           });
         }
@@ -185,6 +193,7 @@ describe('LobeOpenAI', () => {
               name: genericError.name,
             },
             errorType: 'AgentRuntimeError',
+            message: expect.any(String),
             provider: 'openai',
           });
         }
@@ -240,7 +249,16 @@ describe('LobeOpenAI', () => {
 
       const list = await instance.models();
 
-      expect(list).toMatchSnapshot();
+      expect(Array.isArray(list)).toBe(true);
+      expect(list.length).toBeGreaterThan(0);
+
+      const gpt35Turbo = list.find((model) => model.id === 'gpt-3.5-turbo-0613');
+      expect(gpt35Turbo).toBeDefined();
+      expect(gpt35Turbo?.id).toBe('gpt-3.5-turbo-0613');
+
+      const textEmbeddingAda = list.find((model) => model.id === 'text-embedding-ada-002');
+      expect(textEmbeddingAda).toBeDefined();
+      expect(textEmbeddingAda?.type).toBe('embedding');
     });
   });
 
@@ -258,6 +276,20 @@ describe('LobeOpenAI', () => {
       expect(instance['client'].responses.create).toHaveBeenCalled();
       const createCall = (instance['client'].responses.create as Mock).mock.calls[0][0];
       expect(createCall.model).toBe('o1-pro');
+    });
+
+    it('should use responses API for future GPT-5 minor models', async () => {
+      const payload = {
+        messages: [{ content: 'Hello', role: 'user' as const }],
+        model: 'gpt-5.6',
+        temperature: 0.7,
+      };
+
+      await instance.chat(payload);
+
+      expect(instance['client'].responses.create).toHaveBeenCalled();
+      const createCall = (instance['client'].responses.create as Mock).mock.calls[0][0];
+      expect(createCall.model).toBe('gpt-5.6');
     });
 
     it('should use responses API when enabledSearch is true', async () => {
@@ -371,10 +403,10 @@ describe('LobeOpenAI', () => {
       expect(createCall.reasoning).toEqual({ effort: 'medium', summary: 'auto' });
     });
 
-    it('should handle prunePrefixes models without computer-use truncation', async () => {
+    it('should handle reasoning payload models without computer-use truncation', async () => {
       const payload = {
         messages: [{ content: 'Hello', role: 'user' as const }],
-        model: 'o3-pro', // prunePrefixes 模型但非 computer-use，且在 responsesAPIModels 中
+        model: 'o3-pro',
         temperature: 0.7,
       };
 
@@ -402,6 +434,19 @@ describe('LobeOpenAI', () => {
       const payload = {
         messages: [{ content: 'Hello', role: 'user' as const }],
         model: 'gpt-5-pro-2025-10-06',
+        temperature: 0.7,
+      };
+
+      await instance.chat(payload);
+
+      const createCall = (instance['client'].responses.create as Mock).mock.calls[0][0];
+      expect(createCall.reasoning).toEqual({ effort: 'high', summary: 'auto' });
+    });
+
+    it('should set reasoning.effort to high for future gpt-5.x-pro models', async () => {
+      const payload = {
+        messages: [{ content: 'Hello', role: 'user' as const }],
+        model: 'gpt-5.6-pro',
         temperature: 0.7,
       };
 
@@ -453,27 +498,6 @@ describe('LobeOpenAI', () => {
       const createCall = (instance['client'].responses.create as Mock).mock.calls[0][0];
       expect(createCall.max_output_tokens).toBe(4096);
       expect(createCall.max_tokens).toBeUndefined();
-    });
-  });
-
-  describe('supportsFlexTier', () => {
-    // Note: enableServiceTierFlex is read at module load time
-    // These tests verify the logic would work if env var was set at module load
-    it('should verify flex tier logic for supported models', () => {
-      // Since enableServiceTierFlex is read at module load time,
-      // we can't dynamically test it without reloading the module.
-      // Instead, we verify that the supportsFlexTier function logic is correct
-      // by checking the model patterns it should support.
-
-      const flexSupportedModels = ['gpt-5', 'o3', 'o4-mini'];
-
-      // Should support these models
-      expect(flexSupportedModels.some((m) => 'gpt-5-turbo'.startsWith(m))).toBe(true);
-      expect(flexSupportedModels.some((m) => 'o3-pro'.startsWith(m))).toBe(true);
-      expect(flexSupportedModels.some((m) => 'o4-mini'.startsWith(m))).toBe(true);
-
-      // Should NOT support o3-mini (explicitly excluded)
-      expect('o3-mini'.startsWith('o3-mini')).toBe(true);
     });
   });
 

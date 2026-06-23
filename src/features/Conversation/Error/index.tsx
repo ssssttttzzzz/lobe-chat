@@ -1,20 +1,26 @@
-import { ENABLE_BUSINESS_FEATURES } from '@lobechat/business-const';
+import type { HeterogeneousAgentSessionError } from '@lobechat/electron-client-ipc';
+import { HeterogeneousAgentSessionErrorCode } from '@lobechat/electron-client-ipc';
 import { type ILobeAgentRuntimeErrorType } from '@lobechat/model-runtime';
-import { AgentRuntimeErrorType } from '@lobechat/model-runtime';
-import { type ChatMessageError, type ErrorType } from '@lobechat/types';
+import { AgentRuntimeErrorType, getErrorCodeSpec } from '@lobechat/model-runtime';
+import { type ChatMessageError, type ErrorType, type IToolErrorType } from '@lobechat/types';
 import { ChatErrorType } from '@lobechat/types';
-import { type IPluginErrorType } from '@lobehub/chat-plugin-sdk';
 import { type AlertProps } from '@lobehub/ui';
 import { Block, Highlighter, Skeleton } from '@lobehub/ui';
-import { memo, useMemo } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import useBusinessErrorAlertConfig from '@/business/client/hooks/useBusinessErrorAlertConfig';
 import useBusinessErrorContent from '@/business/client/hooks/useBusinessErrorContent';
 import useRenderBusinessChatErrorMessageExtra from '@/business/client/hooks/useRenderBusinessChatErrorMessageExtra';
 import ErrorContent from '@/features/Conversation/ChatItem/components/ErrorContent';
+import { useConversationStore } from '@/features/Conversation/store';
+import HeterogeneousAgentStatusGuide from '@/features/Electron/HeterogeneousAgent/StatusGuide';
+import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
+import { usePermission } from '@/hooks/usePermission';
 import { useProviderName } from '@/hooks/useProviderName';
 import dynamic from '@/libs/next/dynamic';
+import { serverConfigSelectors, useServerConfigStore } from '@/store/serverConfig';
+import { getRuntimeErrorMessage } from '@/utils/locale/runtimeErrorMessage';
 
 import ChatInvalidAPIKey from './ChatInvalidApiKey';
 
@@ -22,6 +28,26 @@ interface ErrorMessageData {
   error?: ChatMessageError | null;
   id: string;
 }
+
+const getRawErrorMessage = (error?: ChatMessageError | null) => {
+  if (!error) return;
+
+  if (typeof error.message === 'string' && error.message.trim()) {
+    return error.message;
+  }
+
+  if (
+    error.body &&
+    typeof error.body === 'object' &&
+    'message' in error.body &&
+    typeof error.body.message === 'string' &&
+    error.body.message.trim()
+  ) {
+    return error.body.message;
+  }
+
+  return;
+};
 
 const loading = () => (
   <Block
@@ -50,9 +76,102 @@ const OllamaSetupGuide = dynamic(() => import('./OllamaSetupGuide'), {
   ssr: false,
 });
 
+const PlanLimitCard = dynamic(() => import('./PlanLimitCard'), { loading, ssr: false });
+
+const DeprecatedModelError = dynamic(() => import('./DeprecatedModelError'), {
+  loading,
+  ssr: false,
+});
+
+const QuotaLimitError = dynamic(() => import('./QuotaLimitError'), { loading, ssr: false });
+
+const TraceIdError = dynamic(() => import('./TraceIdError'), { loading, ssr: false });
+
+const HETEROGENEOUS_AGENT_STATUS_GUIDE_ERROR_CODES = new Set<string>([
+  HeterogeneousAgentSessionErrorCode.AuthRequired,
+  HeterogeneousAgentSessionErrorCode.CliNotFound,
+  HeterogeneousAgentSessionErrorCode.Overloaded,
+  HeterogeneousAgentSessionErrorCode.RateLimit,
+]);
+
+// `UnknownChatFetchError` is excluded: its localized copy is a generic
+// "unknown error" message, so the trace-id report UI is strictly more useful.
+const LEGACY_LOCALIZED_ERROR_TYPES = new Set<string>(
+  Object.values(ChatErrorType)
+    .map(String)
+    .filter((type) => type !== ChatErrorType.UnknownChatFetchError),
+);
+
+/**
+ * Whether `getRuntimeErrorMessage` resolves a dedicated localized message for
+ * this error type — known runtime codes (spec table) plus legacy
+ * `error:response.<X>` entries (ChatErrorType members and HTTP status codes).
+ */
+const hasLocalizedErrorMessage = (
+  errorType?: IToolErrorType | ILobeAgentRuntimeErrorType | ErrorType,
+): boolean => {
+  if (errorType === undefined || errorType === null) return false;
+  if (typeof errorType === 'number') return true;
+  if (getErrorCodeSpec(String(errorType))) return true;
+  return LEGACY_LOCALIZED_ERROR_TYPES.has(String(errorType));
+};
+
+const isGoogleBlockedProviderError = (error?: ChatMessageError | null): boolean => {
+  if (error?.type !== 'ProviderBizError') return false;
+
+  const body = error.body as
+    | {
+        context?: {
+          finishReason?: unknown;
+          promptFeedback?: {
+            blockReason?: unknown;
+          };
+        };
+        provider?: unknown;
+      }
+    | undefined;
+
+  if (body?.provider !== 'google') return false;
+
+  return (
+    typeof body.context?.promptFeedback?.blockReason === 'string' ||
+    typeof body.context?.finishReason === 'string'
+  );
+};
+
+const shouldShowTraceIdError = (
+  error?: ChatMessageError | null,
+): error is ChatMessageError & { body: { traceId: string } } => {
+  if (typeof error?.body?.traceId !== 'string') return false;
+  if (isGoogleBlockedProviderError(error)) return false;
+
+  const errorType = error.type;
+  if (errorType === undefined || errorType === null) return true;
+  if (typeof errorType === 'number') return false;
+
+  const spec = getErrorCodeSpec(String(errorType));
+  if (spec?.isFallback) return true;
+
+  return !hasLocalizedErrorMessage(errorType);
+};
+
+const isHeterogeneousAgentStatusGuideError = (
+  value: unknown,
+): value is HeterogeneousAgentSessionError => {
+  if (!value || typeof value !== 'object') return false;
+
+  const { agentType, code } = value as Partial<HeterogeneousAgentSessionError>;
+
+  return (
+    (agentType === 'claude-code' || agentType === 'codex') &&
+    typeof code === 'string' &&
+    HETEROGENEOUS_AGENT_STATUS_GUIDE_ERROR_CODES.has(code)
+  );
+};
+
 // Config for the errorMessage display
 const getErrorAlertConfig = (
-  errorType?: IPluginErrorType | ILobeAgentRuntimeErrorType | ErrorType,
+  errorType?: IToolErrorType | ILobeAgentRuntimeErrorType | ErrorType,
 ): AlertProps | undefined => {
   // OpenAIBizError / ZhipuBizError / GoogleBizError / ...
   if (typeof errorType === 'string' && (errorType.includes('Biz') || errorType.includes('Invalid')))
@@ -62,6 +181,7 @@ const getErrorAlertConfig = (
 
   switch (errorType) {
     case ChatErrorType.SystemTimeNotMatchError:
+    case AgentRuntimeErrorType.AccountDeactivated:
     case AgentRuntimeErrorType.PermissionDenied:
     case AgentRuntimeErrorType.InsufficientQuota:
     case AgentRuntimeErrorType.ModelNotFound:
@@ -89,7 +209,7 @@ const getErrorAlertConfig = (
 };
 
 export const useErrorContent = (error: any) => {
-  const { t } = useTranslation('error');
+  const { t } = useTranslation(['error', 'modelRuntime']);
   const providerName = useProviderName(error?.body?.provider || '');
   const businessAlertConfig = useBusinessErrorAlertConfig(error?.type);
   const { errorType: businessErrorType, hideMessage } = useBusinessErrorContent(error?.type);
@@ -97,17 +217,28 @@ export const useErrorContent = (error: any) => {
   return useMemo<AlertProps | undefined>(() => {
     if (!error) return;
     const messageError = error;
+    const rawErrorMessage = getRawErrorMessage(messageError);
+
+    if (!messageError.type) {
+      if (!rawErrorMessage) return;
+
+      return {
+        message: rawErrorMessage,
+        type: 'secondary',
+      };
+    }
 
     // Use business alert config if provided, otherwise fall back to default
     const alertConfig = businessAlertConfig ?? getErrorAlertConfig(messageError.type);
 
     // Use business error type if provided, otherwise use original
     const finalErrorType = businessErrorType ?? messageError.type;
+    const translatedMessage = hideMessage
+      ? undefined
+      : getRuntimeErrorMessage(t, finalErrorType, { provider: providerName });
 
     return {
-      message: hideMessage
-        ? undefined
-        : t(`response.${finalErrorType}` as any, { provider: providerName }),
+      message: translatedMessage || rawErrorMessage,
       ...alertConfig,
     };
   }, [businessAlertConfig, businessErrorType, error, hideMessage, providerName, t]);
@@ -116,17 +247,73 @@ export const useErrorContent = (error: any) => {
 interface ErrorExtraProps {
   data: ErrorMessageData;
   error?: AlertProps;
+  onRegenerate?: () => void;
 }
 
-const ErrorMessageExtra = memo<ErrorExtraProps>(({ error: alertError, data }) => {
+const ErrorMessageExtra = memo<ErrorExtraProps>(({ error: alertError, data, onRegenerate }) => {
   const error = data.error;
+  const navigate = useWorkspaceAwareNavigate();
   const businessChatErrorMessageExtra = useRenderBusinessChatErrorMessageExtra(error, data.id);
-  if (ENABLE_BUSINESS_FEATURES && businessChatErrorMessageExtra)
-    return businessChatErrorMessageExtra;
+  const enableBusinessFeatures = useServerConfigStore(serverConfigSelectors.enableBusinessFeatures);
+  const { allowed: canCreate } = usePermission('create_content');
+  const sessionErrorBody = error?.body;
+  const rawErrorMessage = getRawErrorMessage(error) || alertError?.message;
 
-  if (!error?.type) return;
+  const regenerateAssistantMessage = useConversationStore((s) => s.regenerateAssistantMessage);
+  const deleteMessage = useConversationStore((s) => s.deleteMessage);
+  const handleRetryAgentMessage = useCallback(() => {
+    if (!canCreate) return;
+    if (onRegenerate) {
+      onRegenerate();
+      return;
+    }
+    regenerateAssistantMessage(data.id);
+    if (data.error) deleteMessage(data.id);
+  }, [canCreate, data.error, data.id, deleteMessage, onRegenerate, regenerateAssistantMessage]);
 
-  switch (error.type) {
+  if (isHeterogeneousAgentStatusGuideError(sessionErrorBody)) {
+    return (
+      <HeterogeneousAgentStatusGuide
+        agentType={sessionErrorBody.agentType}
+        error={sessionErrorBody}
+        onOpenSystemTools={() => navigate('/settings/system-tools')}
+        onRetry={handleRetryAgentMessage}
+      />
+    );
+  }
+
+  if (enableBusinessFeatures && businessChatErrorMessageExtra) return businessChatErrorMessageExtra;
+
+  switch (error?.type) {
+    // Lightweight fallbacks for cloud billing errors, used in builds without a
+    // business override (e.g. desktop). The business hook above takes
+    // precedence when installed.
+    case ChatErrorType.FreePlanLimit:
+    case ChatErrorType.SubscriptionPlanLimit:
+    case ChatErrorType.InsufficientBudgetForModel: {
+      if (enableBusinessFeatures)
+        return (
+          <PlanLimitCard
+            errorBody={error?.body}
+            errorType={error?.type}
+            onRetry={handleRetryAgentMessage}
+          />
+        );
+      break;
+    }
+
+    case ChatErrorType.LobeHubModelDeprecated: {
+      if (enableBusinessFeatures)
+        return <DeprecatedModelError requestedModel={error?.body?.requestedModel} />;
+      break;
+    }
+
+    case AgentRuntimeErrorType.QuotaLimitReached:
+    case AgentRuntimeErrorType.RateLimitExceeded: {
+      if (enableBusinessFeatures) return <QuotaLimitError id={data.id} />;
+      break;
+    }
+
     case AgentRuntimeErrorType.OllamaServiceUnavailable: {
       return <OllamaSetupGuide id={data.id} />;
     }
@@ -139,10 +326,6 @@ const ErrorMessageExtra = memo<ErrorExtraProps>(({ error: alertError, data }) =>
       return <ExceededContextWindowError id={data.id} />;
     }
 
-    /* ↓ cloud slot ↓ */
-
-    /* ↑ cloud slot ↑ */
-
     case AgentRuntimeErrorType.NoOpenAIAPIKey: {
       {
         return <ChatInvalidAPIKey id={data.id} provider={data.error?.body?.provider} />;
@@ -150,8 +333,14 @@ const ErrorMessageExtra = memo<ErrorExtraProps>(({ error: alertError, data }) =>
     }
   }
 
-  if (error.type.toString().includes('Invalid')) {
+  if (error?.type?.toString().includes('Invalid')) {
     return <ChatInvalidAPIKey id={data.id} provider={data.error?.body?.provider} />;
+  }
+
+  // Show a report action for unknown or fallback-bucket traceable errors.
+  // Specific known error types keep their dedicated localized message below.
+  if (enableBusinessFeatures && shouldShowTraceIdError(error)) {
+    return <TraceIdError id={data.id} traceId={error.body.traceId} />;
   }
 
   return (
@@ -159,6 +348,7 @@ const ErrorMessageExtra = memo<ErrorExtraProps>(({ error: alertError, data }) =>
       id={data.id}
       error={{
         ...alertError,
+        ...(rawErrorMessage ? { message: rawErrorMessage } : {}),
         extra: data.error?.body ? (
           <Highlighter
             actionIconSize={'small'}
@@ -170,6 +360,7 @@ const ErrorMessageExtra = memo<ErrorExtraProps>(({ error: alertError, data }) =>
           </Highlighter>
         ) : undefined,
       }}
+      onRegenerate={canCreate ? onRegenerate : undefined}
     />
   );
 });

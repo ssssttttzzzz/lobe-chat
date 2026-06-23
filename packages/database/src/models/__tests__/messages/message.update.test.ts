@@ -13,7 +13,9 @@ import {
   messageTranslates,
   messageTTS,
   sessions,
+  topics,
   users,
+  workspaces,
 } from '../../../schemas';
 import type { LobeChatDatabase } from '../../../type';
 import { MessageModel } from '../../message';
@@ -23,7 +25,9 @@ const serverDB: LobeChatDatabase = await getTestDB();
 
 const userId = 'message-update-test';
 const otherUserId = 'message-update-test-other';
+const workspaceId = 'message-update-workspace';
 const messageModel = new MessageModel(serverDB, userId);
+const workspaceMessageModel = new MessageModel(serverDB, otherUserId, workspaceId);
 const embeddingsId = uuid();
 
 beforeEach(async () => {
@@ -32,6 +36,12 @@ beforeEach(async () => {
     await trx.delete(users).where(eq(users.id, userId));
     await trx.delete(users).where(eq(users.id, otherUserId));
     await trx.insert(users).values([{ id: userId }, { id: otherUserId }]);
+    await trx.insert(workspaces).values({
+      id: workspaceId,
+      name: 'Message Workspace',
+      primaryOwnerId: userId,
+      slug: workspaceId,
+    });
 
     await trx.insert(sessions).values([
       // { id: 'session1', userId },
@@ -283,7 +293,7 @@ describe('MessageModel Update Tests', () => {
         .insert(messages)
         .values([{ id: '1', userId, role: 'user', content: 'message 1' }]);
 
-      // 调用 deleteMessage 方法
+      // Call deleteMessage method
       await messageModel.deleteMessage('1');
 
       // Assert result
@@ -303,7 +313,7 @@ describe('MessageModel Update Tests', () => {
           .values([{ id: '2', toolCallId: 'tool1', identifier: 'plugin-1', userId }]);
       });
 
-      // 调用 deleteMessage 方法
+      // Call deleteMessage method
       await messageModel.deleteMessage('1');
 
       // Assert result
@@ -324,7 +334,7 @@ describe('MessageModel Update Tests', () => {
         .insert(messages)
         .values([{ id: '1', userId: otherUserId, role: 'user', content: 'message 1' }]);
 
-      // 调用 deleteMessage 方法
+      // Call deleteMessage method
       await messageModel.deleteMessage('1');
 
       // Assert result
@@ -341,7 +351,7 @@ describe('MessageModel Update Tests', () => {
         { id: '2', userId, role: 'user', content: 'message 2' },
       ]);
 
-      // 调用 deleteMessage 方法
+      // Call deleteMessage method
       await messageModel.deleteMessages(['1', '2']);
 
       // Assert result
@@ -358,7 +368,7 @@ describe('MessageModel Update Tests', () => {
         { id: '2', userId: otherUserId, role: 'user', content: 'message 1' },
       ]);
 
-      // 调用 deleteMessage 方法
+      // Call deleteMessage method
       await messageModel.deleteMessages(['1', '2']);
 
       // Assert result
@@ -376,7 +386,7 @@ describe('MessageModel Update Tests', () => {
         { id: '3', userId: otherUserId, role: 'user', content: 'message 3' },
       ]);
 
-      // 调用 deleteAllMessages 方法
+      // Call deleteAllMessages method
       await messageModel.deleteAllMessages();
 
       // Assert result
@@ -426,7 +436,7 @@ describe('MessageModel Update Tests', () => {
         },
       ]);
 
-      // 调用 updatePluginState 方法
+      // Call updatePluginState method
       await messageModel.updatePluginState('1', { key2: 'value2' });
 
       // Assert result
@@ -458,7 +468,7 @@ describe('MessageModel Update Tests', () => {
     });
 
     it('should throw an error if plugin does not exist', async () => {
-      // 调用 updatePluginState 方法
+      // Call updatePluginState method
       await expect(messageModel.updatePluginState('1', { key: 'value' })).rejects.toThrowError(
         'Plugin not found',
       );
@@ -478,7 +488,7 @@ describe('MessageModel Update Tests', () => {
         },
       ]);
 
-      // 调用 updatePluginState 方法
+      // Call updatePluginState method
       await messageModel.updateMessagePlugin('1', { identifier: 'plugin2' });
 
       // Assert result
@@ -488,10 +498,46 @@ describe('MessageModel Update Tests', () => {
     });
 
     it('should throw an error if plugin does not exist', async () => {
-      // 调用 updateMessagePlugin 方法（修复：之前错误地调用了 updatePluginState）
+      // Call updateMessagePlugin method (fix: previously incorrectly called updatePluginState)
       await expect(
         messageModel.updateMessagePlugin('non-existent-id', { identifier: 'test' }),
       ).rejects.toThrowError('Plugin not found');
+    });
+  });
+
+  describe('findMessagePlugin', () => {
+    it('should return the plugin row (identifier / apiName / toolCallId / ...) for a tool message', async () => {
+      await serverDB.insert(messages).values({ id: '1', role: 'tool', content: '', userId });
+      await serverDB.insert(messagePlugins).values([
+        {
+          id: '1',
+          apiName: 'runCommand',
+          arguments: '{"command":"echo"}',
+          identifier: 'lobe-local-system',
+          toolCallId: 'call_abc',
+          type: 'builtin',
+          userId,
+        },
+      ]);
+
+      const plugin = await messageModel.findMessagePlugin('1');
+
+      expect(plugin).toEqual(
+        expect.objectContaining({
+          apiName: 'runCommand',
+          arguments: '{"command":"echo"}',
+          id: '1',
+          identifier: 'lobe-local-system',
+          toolCallId: 'call_abc',
+          type: 'builtin',
+        }),
+      );
+    });
+
+    it('should return undefined when no plugin row exists for the given id', async () => {
+      const plugin = await messageModel.findMessagePlugin('non-existent-id');
+
+      expect(plugin).toBeUndefined();
     });
   });
 
@@ -777,7 +823,7 @@ describe('MessageModel Update Tests', () => {
         metadata: { existingKey: 'existingValue' },
       });
 
-      // 调用 updateMetadata 方法
+      // Call updateMetadata method
       await messageModel.updateMetadata('msg-with-metadata', { newKey: 'newValue' });
 
       // Assert result
@@ -808,7 +854,7 @@ describe('MessageModel Update Tests', () => {
         },
       });
 
-      // 调用 updateMetadata 方法
+      // Call updateMetadata method
       await messageModel.updateMetadata('msg-merge-metadata', {
         level1: {
           level2a: 'updated',
@@ -817,7 +863,7 @@ describe('MessageModel Update Tests', () => {
         newTopLevel: 'value',
       });
 
-      // Assert result - 应该使用 es-toolkit merge 行为
+      // Assert result - should use es-toolkit merge behavior
       const result = await serverDB
         .select()
         .from(messages)
@@ -835,10 +881,10 @@ describe('MessageModel Update Tests', () => {
     });
 
     it('should handle non-existent message IDs', async () => {
-      // 调用 updateMetadata 方法，尝试更新不存在的消息
+      // Call updateMetadata method, trying to update a non-existent message
       const result = await messageModel.updateMetadata('non-existent-id', { key: 'value' });
 
-      // Assert result - 应该返回 undefined
+      // Assert result - should return undefined
       expect(result).toBeUndefined();
     });
 
@@ -852,10 +898,10 @@ describe('MessageModel Update Tests', () => {
         metadata: { originalKey: 'originalValue' },
       });
 
-      // 调用 updateMetadata 方法，传递空对象
+      // Call updateMetadata method, passing empty object
       await messageModel.updateMetadata('msg-empty-metadata', {});
 
-      // Assert result - 原始 metadata 应该保持不变
+      // Assert result - original metadata should remain unchanged
       const result = await serverDB
         .select()
         .from(messages)
@@ -874,10 +920,10 @@ describe('MessageModel Update Tests', () => {
         metadata: null,
       });
 
-      // 调用 updateMetadata 方法
+      // Call updateMetadata method
       await messageModel.updateMetadata('msg-null-metadata', { key: 'value' });
 
-      // Assert result - 应该创建新的 metadata
+      // Assert result - should create new metadata
       const result = await serverDB
         .select()
         .from(messages)
@@ -887,7 +933,7 @@ describe('MessageModel Update Tests', () => {
     });
 
     it('should only update messages belonging to the current user', async () => {
-      // Create test data - 其他用户的消息
+      // Create test data - messages from other users
       await serverDB.insert(messages).values({
         id: 'msg-other-user',
         userId: otherUserId,
@@ -896,21 +942,45 @@ describe('MessageModel Update Tests', () => {
         metadata: { originalKey: 'originalValue' },
       });
 
-      // 调用 updateMetadata 方法
+      // Call updateMetadata method
       const result = await messageModel.updateMetadata('msg-other-user', {
         hackedKey: 'hackedValue',
       });
 
-      // Assert result - 应该返回 undefined
+      // Assert result - should return undefined
       expect(result).toBeUndefined();
 
-      // 验证原始 metadata 未被修改
+      // Verify original metadata was not modified
       const dbResult = await serverDB
         .select()
         .from(messages)
         .where(eq(messages.id, 'msg-other-user'));
 
       expect(dbResult[0].metadata).toEqual({ originalKey: 'originalValue' });
+    });
+
+    it('should update workspace messages even when created by another user', async () => {
+      await serverDB.insert(messages).values({
+        id: 'msg-workspace-metadata',
+        userId,
+        workspaceId,
+        role: 'user',
+        content: 'test message',
+        metadata: { originalKey: 'originalValue' },
+      });
+
+      await workspaceMessageModel.updateMetadata('msg-workspace-metadata', {
+        workspaceKey: 'workspaceValue',
+      });
+
+      const dbResult = await serverDB
+        .select()
+        .from(messages)
+        .where(eq(messages.id, 'msg-workspace-metadata'));
+      expect(dbResult[0].metadata).toEqual({
+        originalKey: 'originalValue',
+        workspaceKey: 'workspaceValue',
+      });
     });
 
     it('should handle complex nested metadata updates', async () => {
@@ -931,7 +1001,7 @@ describe('MessageModel Update Tests', () => {
         },
       });
 
-      // 调用 updateMetadata 方法
+      // Call updateMetadata method
       await messageModel.updateMetadata('msg-complex-metadata', {
         config: {
           settings: {
@@ -990,7 +1060,6 @@ describe('MessageModel Update Tests', () => {
         role: 'tool',
         content: 'search result',
         parentId: 'assistant-msg-1',
-        tool_call_id: 'tool-call-1',
       });
 
       // Create plugin record
@@ -1058,7 +1127,6 @@ describe('MessageModel Update Tests', () => {
           role: 'tool',
           content: 'search result',
           parentId: 'assistant-msg-2',
-          tool_call_id: 'tool-call-search',
         },
         {
           id: 'tool-msg-calc',
@@ -1066,7 +1134,6 @@ describe('MessageModel Update Tests', () => {
           role: 'tool',
           content: 'calc result',
           parentId: 'assistant-msg-2',
-          tool_call_id: 'tool-call-calc',
         },
       ]);
 
@@ -1175,7 +1242,6 @@ describe('MessageModel Update Tests', () => {
         role: 'tool' as const,
         content: '',
         parentId: `perf-assistant-${i}`,
-        tool_call_id: `perf-tool-call-${i}`,
       }));
 
       await serverDB.insert(messages).values(toolMessagesData);
@@ -1223,7 +1289,7 @@ describe('MessageModel Update Tests', () => {
         .insert(messages)
         .values([{ id: '1', userId, role: 'user', content: 'message 1' }]);
 
-      // 调用 updateTranslate 方法
+      // Call updateTranslate method
       await messageModel.updateTranslate('1', {
         content: 'translated message 1',
         from: 'en',
@@ -1240,6 +1306,33 @@ describe('MessageModel Update Tests', () => {
       expect(result[0].content).toBe('translated message 1');
     });
 
+    it('should insert workspaceId for workspace translate records', async () => {
+      await serverDB.insert(messages).values({
+        id: 'workspace-translate',
+        userId,
+        workspaceId,
+        role: 'user',
+        content: 'message 1',
+      });
+
+      await workspaceMessageModel.updateTranslate('workspace-translate', {
+        content: 'translated message 1',
+        from: 'en',
+        to: 'zh',
+      });
+
+      const result = await serverDB
+        .select()
+        .from(messageTranslates)
+        .where(eq(messageTranslates.id, 'workspace-translate'));
+
+      expect(result[0]).toMatchObject({
+        id: 'workspace-translate',
+        userId: otherUserId,
+        workspaceId,
+      });
+    });
+
     it('should update the corresponding fields if message exists in messageTranslates table', async () => {
       // Create test data
       await serverDB.transaction(async (trx) => {
@@ -1251,7 +1344,7 @@ describe('MessageModel Update Tests', () => {
           .values([{ id: '1', content: 'translated message 1', from: 'en', to: 'zh', userId }]);
       });
 
-      // 调用 updateTranslate 方法
+      // Call updateTranslate method
       await messageModel.updateTranslate('1', { content: 'updated translated message 1' });
 
       // Assert result
@@ -1271,7 +1364,7 @@ describe('MessageModel Update Tests', () => {
         .insert(messages)
         .values([{ id: '1', userId, role: 'user', content: 'message 1' }]);
 
-      // 调用 updateTTS 方法
+      // Call updateTTS method
       await messageModel.updateTTS('1', { contentMd5: 'md5', file: 'f1', voice: 'voice1' });
 
       // Assert result
@@ -1279,6 +1372,29 @@ describe('MessageModel Update Tests', () => {
 
       expect(result).toHaveLength(1);
       expect(result[0].voice).toBe('voice1');
+    });
+
+    it('should insert workspaceId for workspace TTS records', async () => {
+      await serverDB.insert(messages).values({
+        id: 'workspace-tts',
+        userId,
+        workspaceId,
+        role: 'user',
+        content: 'message 1',
+      });
+
+      await workspaceMessageModel.updateTTS('workspace-tts', {
+        contentMd5: 'md5',
+        file: 'f1',
+        voice: 'voice1',
+      });
+
+      const result = await serverDB
+        .select()
+        .from(messageTTS)
+        .where(eq(messageTTS.id, 'workspace-tts'));
+
+      expect(result[0]).toMatchObject({ id: 'workspace-tts', userId: otherUserId, workspaceId });
     });
 
     it('should update the corresponding fields if message exists in messageTTS table', async () => {
@@ -1292,7 +1408,7 @@ describe('MessageModel Update Tests', () => {
           .values([{ id: '1', contentMd5: 'md5', fileId: 'f1', voice: 'voice1', userId }]);
       });
 
-      // 调用 updateTTS 方法
+      // Call updateTTS method
       await messageModel.updateTTS('1', { voice: 'updated voice1' });
 
       // Assert result
@@ -1382,7 +1498,6 @@ describe('MessageModel Update Tests', () => {
         role: 'tool',
         content: 'tool result',
         parentId: 'assistant-no-tools',
-        tool_call_id: 'orphan-tool-call',
       });
 
       // Create plugin record
@@ -1400,6 +1515,136 @@ describe('MessageModel Update Tests', () => {
         '{"key":"updated"}',
       );
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe('topic usage rollup', () => {
+    beforeEach(async () => {
+      await serverDB.insert(topics).values({ id: 'update-usage-topic', userId });
+    });
+
+    it('recomputes the topic rollup when the update carries metadata.usage', async () => {
+      await serverDB.insert(messages).values({
+        id: 'finalize-msg',
+        model: 'gpt-4o',
+        provider: 'openai',
+        role: 'assistant',
+        topicId: 'update-usage-topic',
+        userId,
+      });
+
+      // assistant finalize: the write that first carries token usage
+      await messageModel.update('finalize-msg', {
+        metadata: {
+          usage: { cost: 0.004, totalInputTokens: 70, totalOutputTokens: 30, totalTokens: 100 },
+        } as any,
+      });
+
+      const [topic] = await serverDB
+        .select()
+        .from(topics)
+        .where(eq(topics.id, 'update-usage-topic'));
+      expect(topic.totalTokens).toBe(100);
+      expect(topic.totalCost).toBeCloseTo(0.004, 6);
+      expect((topic.usage as any).llm.apiCalls).toBe(1);
+    });
+
+    it('does NOT recompute on a content-only update (no metadata.usage)', async () => {
+      // an already-finalized assistant message with usage
+      await serverDB.insert(messages).values({
+        id: 'done-msg',
+        metadata: { usage: { cost: 0.01, totalInputTokens: 10, totalTokens: 20 } },
+        model: 'gpt-4o',
+        provider: 'openai',
+        role: 'assistant',
+        topicId: 'update-usage-topic',
+        userId,
+      });
+      await messageModel.update('done-msg', {
+        metadata: { usage: { cost: 0.01, totalInputTokens: 10, totalTokens: 20 } } as any,
+      });
+      const [seeded] = await serverDB
+        .select()
+        .from(topics)
+        .where(eq(topics.id, 'update-usage-topic'));
+      expect(seeded.totalTokens).toBe(20);
+
+      // a streaming content-only update must not touch the rollup
+      await messageModel.update('done-msg', { content: 'streamed text' });
+
+      const [topic] = await serverDB
+        .select()
+        .from(topics)
+        .where(eq(topics.id, 'update-usage-topic'));
+      expect(topic.totalTokens).toBe(20);
+      expect(topic.totalCost).toBeCloseTo(0.01, 6);
+    });
+  });
+
+  describe('usage column promotion', () => {
+    it('promotes metadata.usage into the dedicated usage column', async () => {
+      await serverDB.insert(messages).values({
+        id: 'promote-msg',
+        role: 'assistant',
+        userId,
+      });
+
+      const usage = { cost: 0.004, totalInputTokens: 70, totalOutputTokens: 30, totalTokens: 100 };
+      await messageModel.update('promote-msg', { metadata: { usage } as any });
+
+      const [row] = await serverDB.select().from(messages).where(eq(messages.id, 'promote-msg'));
+      expect(row.usage).toEqual(usage);
+      // metadata.usage stays written for backward-compatible reads
+      expect((row.metadata as any).usage).toEqual(usage);
+    });
+
+    it('prefers a top-level usage over metadata.usage', async () => {
+      await serverDB.insert(messages).values({
+        id: 'prefer-msg',
+        role: 'assistant',
+        userId,
+      });
+
+      const topLevel = { cost: 0.01, totalTokens: 200 };
+      await messageModel.update('prefer-msg', {
+        metadata: { usage: { cost: 0.004, totalTokens: 100 } } as any,
+        usage: topLevel as any,
+      });
+
+      const [row] = await serverDB.select().from(messages).where(eq(messages.id, 'prefer-msg'));
+      expect(row.usage).toEqual(topLevel);
+      // metadata.usage is kept consistent with the column
+      expect((row.metadata as any).usage).toEqual(topLevel);
+    });
+
+    it('dual-writes metadata.usage when usage arrives as a top-level param only', async () => {
+      await serverDB.insert(messages).values({
+        id: 'top-only-msg',
+        metadata: { tps: 1 }, // pre-existing non-usage metadata must be preserved
+        role: 'assistant',
+        userId,
+      });
+
+      const usage = { cost: 0.006, totalTokens: 150 };
+      // no metadata payload — only the top-level usage
+      await messageModel.update('top-only-msg', { usage: usage as any });
+
+      const [row] = await serverDB.select().from(messages).where(eq(messages.id, 'top-only-msg'));
+      expect(row.usage).toEqual(usage);
+      // legacy readers / rollback paths still see metadata.usage
+      expect((row.metadata as any).usage).toEqual(usage);
+      expect((row.metadata as any).tps).toBe(1);
+    });
+
+    it('updateMetadata syncs usage into the usage column', async () => {
+      await serverDB.insert(messages).values({ id: 'meta-msg', role: 'assistant', userId });
+
+      const usage = { cost: 0.002, totalTokens: 60 };
+      await messageModel.updateMetadata('meta-msg', { usage });
+
+      const [row] = await serverDB.select().from(messages).where(eq(messages.id, 'meta-msg'));
+      expect(row.usage).toEqual(usage);
+      expect((row.metadata as any).usage).toEqual(usage);
     });
   });
 });

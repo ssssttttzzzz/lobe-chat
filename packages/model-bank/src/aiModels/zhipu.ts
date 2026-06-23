@@ -1,4 +1,8 @@
-import { type AIChatModelCard, type AIImageModelCard } from '../types/aiModel';
+import {
+  type AIChatModelCard,
+  type AIImageModelCard,
+  type AIVideoModelCard,
+} from '../types/aiModel';
 
 // price: https://bigmodel.cn/pricing
 // ref: https://docs.bigmodel.cn/cn/guide/start/model-overview
@@ -12,9 +16,200 @@ const zhipuChatModels: AIChatModelCard[] = [
     },
     contextWindowTokens: 200_000,
     description:
+      'GLM-5.1 is Zhipu’s latest flagship model, aligned with Claude Opus 4.6 on overall and coding capabilities. It excels at long-horizon tasks, able to autonomously plan, execute, and iterate for up to 8 hours in a single task, making it an ideal foundation for Autonomous Agents and long-horizon Coding Agents.',
+    displayName: 'GLM-5.1',
+    enabled: true,
+    family: 'glm',
+    generation: 'glm-5.1',
+    id: 'glm-5.1',
+    maxOutput: 131_072,
+    pricing: {
+      currency: 'CNY',
+      units: [
+        {
+          lookup: {
+            prices: {
+              '[0, 0.032]': 1.3,
+              '[0.032, infinity]': 2,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textInput_cacheRead',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+        {
+          lookup: {
+            prices: {
+              '[0, 0.032]': 6,
+              '[0.032, infinity]': 8,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textInput',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+        {
+          lookup: {
+            prices: {
+              '[0, 0.032]': 24,
+              '[0.032, infinity]': 28,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textOutput',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-03-27',
+    settings: {
+      extendParams: ['enableReasoning'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+      video: true,
+      vision: true,
+    },
+    contextWindowTokens: 200_000,
+    description:
+      'GLM-5V-Turbo is Zhipu’s multimodal Coding foundation model for visual programming tasks. It natively handles images, video, text, and files, and is optimized for long-horizon planning, complex coding, and agent execution in multimodal workflows.',
+    displayName: 'GLM-5V-Turbo',
+    enabled: true,
+    family: 'glm',
+    generation: 'glm-5',
+    id: 'glm-5v-turbo',
+    maxOutput: 131_072,
+    pricing: {
+      currency: 'CNY',
+      units: [
+        {
+          lookup: {
+            prices: {
+              '[0, 0.032]': 1.2,
+              '[0.032, infinity]': 1.8,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textInput_cacheRead',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+        {
+          lookup: {
+            prices: {
+              '[0, 0.032]': 5,
+              '[0.032, infinity]': 7,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textInput',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+        {
+          lookup: {
+            prices: {
+              '[0, 0.032]': 22,
+              '[0.032, infinity]': 26,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textOutput',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    settings: {
+      extendParams: ['enableReasoning'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+    },
+    contextWindowTokens: 200_000,
+    description:
+      'GLM-5-Turbo is a foundation model deeply optimized for agentic scenarios. It has been specifically optimized for core requirements of agent tasks from the training phase, enhancing key capabilities such as tool invocation, command following, and long-chain execution. It is ideal for building high-performance agent assistants.',
+    displayName: 'GLM-5-Turbo',
+    family: 'glm',
+    generation: 'glm-5',
+    id: 'glm-5-turbo',
+    maxOutput: 131_072,
+    pricing: {
+      currency: 'CNY',
+      units: [
+        {
+          lookup: {
+            prices: {
+              '[0, 0.032]': 1.2,
+              '[0.032, infinity]': 1.8,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textInput_cacheRead',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+        {
+          lookup: {
+            prices: {
+              '[0, 0.032]': 5,
+              '[0.032, infinity]': 7,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textInput',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+        {
+          lookup: {
+            prices: {
+              '[0, 0.032]': 22,
+              '[0.032, infinity]': 26,
+            },
+            pricingParams: ['textInput'],
+          },
+          name: 'textOutput',
+          strategy: 'lookup',
+          unit: 'millionTokens',
+        },
+      ],
+    },
+    releasedAt: '2026-03-15',
+    settings: {
+      extendParams: ['enableReasoning'],
+      searchImpl: 'params',
+    },
+    type: 'chat',
+  },
+  {
+    abilities: {
+      functionCall: true,
+      reasoning: true,
+      search: true,
+    },
+    contextWindowTokens: 200_000,
+    description:
       'GLM-5 is Zhipu’s next-generation flagship foundation model, purpose-built for Agentic Engineering. It delivers reliable productivity in complex systems engineering and long-horizon agentic tasks. In coding and agent capabilities, GLM-5 achieves state-of-the-art performance among open-source models. In real-world programming scenarios, its user experience approaches that of Claude Opus 4.5. It excels at complex systems engineering and long-horizon agent tasks, making it an ideal foundation model for general-purpose agent assistants.',
     displayName: 'GLM-5',
     enabled: true,
+    family: 'glm',
+    generation: 'glm-5',
     id: 'glm-5',
     maxOutput: 131_072,
     pricing: {
@@ -60,7 +255,7 @@ const zhipuChatModels: AIChatModelCard[] = [
     },
     releasedAt: '2026-02-12',
     settings: {
-      extendParams: ['enableReasoning'],
+      extendParams: ['enableReasoning', 'preserveThinking'],
       searchImpl: 'params',
     },
     type: 'chat',
@@ -75,6 +270,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       "GLM-4.7 is Zhipu's latest flagship model, enhanced for Agentic Coding scenarios with improved coding capabilities, long-term task planning, and tool collaboration. It achieves leading performance among open-source models on multiple public benchmarks. General capabilities are improved with more concise and natural responses and more immersive writing. For complex agent tasks, instruction following during tool calls is stronger, and the frontend aesthetics and long-term task completion efficiency of Artifacts and Agentic Coding are further enhanced.",
     displayName: 'GLM-4.7',
+    family: 'glm',
+    generation: 'glm-4.7',
     id: 'glm-4.7',
     maxOutput: 131_072,
     pricing: {
@@ -123,7 +320,7 @@ const zhipuChatModels: AIChatModelCard[] = [
     },
     releasedAt: '2025-12-22',
     settings: {
-      extendParams: ['enableReasoning'],
+      extendParams: ['enableReasoning', 'preserveThinking'],
       searchImpl: 'params',
     },
     type: 'chat',
@@ -139,6 +336,8 @@ const zhipuChatModels: AIChatModelCard[] = [
       'GLM-4.7-Flash, as a 30B-level SOTA model, offers a new choice that balances performance and efficiency. It enhances coding capabilities, long-term task planning, and tool collaboration for Agentic Coding scenarios, achieving leading performance among open-source models of the same size in multiple current benchmark leaderboards. In executing complex intelligent agent tasks, it has stronger instruction compliance during tool calls, and further improves the aesthetics of front-end and the efficiency of long-term task completion for Artifacts and Agentic Coding.',
     displayName: 'GLM-4.7-Flash',
     enabled: true,
+    family: 'glm',
+    generation: 'glm-4.7',
     id: 'glm-4.7-flash',
     maxOutput: 131_072,
     pricing: {
@@ -166,6 +365,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'GLM-4.7-Flash, as a 30B-level SOTA model, offers a new choice that balances performance and efficiency. It enhances coding capabilities, long-term task planning, and tool collaboration for Agentic Coding scenarios, achieving leading performance among open-source models of the same size in multiple current benchmark leaderboards. In executing complex intelligent agent tasks, it has stronger instruction compliance during tool calls, and further improves the aesthetics of front-end and the efficiency of long-term task completion for Artifacts and Agentic Coding.',
     displayName: 'GLM-4.7-FlashX',
+    family: 'glm',
+    generation: 'glm-4.7',
     id: 'glm-4.7-flashx',
     maxOutput: 131_072,
     pricing: {
@@ -195,7 +396,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'The GLM-4.6V series represents a major iteration of the GLM family in the multimodal direction, comprising GLM-4.6V (flagship), GLM-4.6V-FlashX (lightweight and high-speed), and GLM-4.6V-Flash (fully free). It extends the training-time context window to 128k tokens, achieves state-of-the-art visual understanding accuracy at comparable parameter scales, and, for the first time, natively integrates Function Call (tool invocation) capabilities into the visual model architecture. This unifies the pipeline from “visual perception” to “executable actions,” providing a consistent technical foundation for multimodal agents in real-world production scenarios.',
     displayName: 'GLM-4.6V',
-    enabled: true,
+    family: 'glm',
+    generation: 'glm-4.6',
     id: 'glm-4.6v',
     maxOutput: 32_768,
     pricing: {
@@ -258,6 +460,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'The GLM-4.6V series represents a major iteration of the GLM family in the multimodal direction, comprising GLM-4.6V (flagship), GLM-4.6V-FlashX (lightweight and high-speed), and GLM-4.6V-Flash (fully free). It extends the training-time context window to 128k tokens, achieves state-of-the-art visual understanding accuracy at comparable parameter scales, and, for the first time, natively integrates Function Call (tool invocation) capabilities into the visual model architecture. This unifies the pipeline from “visual perception” to “executable actions,” providing a consistent technical foundation for multimodal agents in real-world production scenarios.',
     displayName: 'GLM-4.6V-FlashX',
+    family: 'glm',
+    generation: 'glm-4.6',
     id: 'glm-4.6v-flashx',
     maxOutput: 32_768,
     pricing: {
@@ -320,6 +524,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'The GLM-4.6V series represents a major iteration of the GLM family in the multimodal direction, comprising GLM-4.6V (flagship), GLM-4.6V-FlashX (lightweight and high-speed), and GLM-4.6V-Flash (fully free). It extends the training-time context window to 128k tokens, achieves state-of-the-art visual understanding accuracy at comparable parameter scales, and, for the first time, natively integrates Function Call (tool invocation) capabilities into the visual model architecture. This unifies the pipeline from “visual perception” to “executable actions,” providing a consistent technical foundation for multimodal agents in real-world production scenarios.',
     displayName: 'GLM-4.6V-Flash',
+    family: 'glm',
+    generation: 'glm-4.6',
     id: 'glm-4.6v-flash',
     maxOutput: 32_768,
     pricing: {
@@ -347,6 +553,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       "Zhipu's latest flagship model GLM-4.6 (355B) fully surpasses its predecessors in advanced coding, long-text processing, reasoning, and agent capabilities. It particularly aligns with Claude Sonnet 4 in programming ability, becoming China's top Coding model.",
     displayName: 'GLM-4.6',
+    family: 'glm',
+    generation: 'glm-4.6',
     id: 'glm-4.6',
     maxOutput: 131_072,
     pricing: {
@@ -412,6 +620,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'Zhipu’s next-generation MoE vision reasoning model has 106B total parameters with 12B active, achieving SOTA among similarly sized open-source multimodal models across image, video, document understanding, and GUI tasks.',
     displayName: 'GLM-4.5V',
+    family: 'glm',
+    generation: 'glm-4.5',
     id: 'glm-4.5v',
     maxOutput: 16_384,
     pricing: {
@@ -471,6 +681,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'Zhipu flagship model with a switchable thinking mode, delivering open-source SOTA overall and up to 128K context.',
     displayName: 'GLM-4.5',
+    family: 'glm',
+    generation: 'glm-4.5',
     id: 'glm-4.5',
     maxOutput: 98_304,
     pricing: {
@@ -533,6 +745,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'GLM-4.5 fast edition, delivering strong performance with generation speeds up to 100 tokens/sec.',
     displayName: 'GLM-4.5-X',
+    family: 'glm',
+    generation: 'glm-4.5',
     id: 'glm-4.5-x',
     maxOutput: 98_304,
     pricing: {
@@ -595,6 +809,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'GLM-4.5 lightweight edition that balances performance and cost, with flexible hybrid thinking modes.',
     displayName: 'GLM-4.5-Air',
+    family: 'glm',
+    generation: 'glm-4.5',
     id: 'glm-4.5-air',
     maxOutput: 98_304,
     pricing: {
@@ -654,6 +870,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     contextWindowTokens: 131_072,
     description: 'GLM-4.5-Air fast edition with quicker responses for high-scale, high-speed use.',
     displayName: 'GLM-4.5-AirX',
+    family: 'glm',
+    generation: 'glm-4.5',
     id: 'glm-4.5-airx',
     maxOutput: 98_304,
     pricing: {
@@ -714,6 +932,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'GLM-4.1V-Thinking is the strongest known ~10B VLM, covering SOTA tasks like video understanding, image QA, subject solving, OCR, document and chart reading, GUI agents, frontend coding, and grounding. It even surpasses the 8x larger Qwen2.5-VL-72B on many tasks. With advanced RL, it uses chain-of-thought reasoning to improve accuracy and richness, outperforming traditional non-thinking models in both outcomes and explainability.',
     displayName: 'GLM-4.1V-Thinking-FlashX',
+    family: 'glm',
+    generation: 'glm-4.1',
     id: 'glm-4.1v-thinking-flashx',
     maxOutput: 32_768,
     pricing: {
@@ -735,6 +955,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'GLM-4.1V-Thinking is the strongest known ~10B VLM, covering SOTA tasks like video understanding, image QA, subject solving, OCR, document and chart reading, GUI agents, frontend coding, and grounding. It even surpasses the 8x larger Qwen2.5-VL-72B on many tasks. With advanced RL, it uses chain-of-thought reasoning to improve accuracy and richness, outperforming traditional non-thinking models in both outcomes and explainability.',
     displayName: 'GLM-4.1V-Thinking-Flash',
+    family: 'glm',
+    generation: 'glm-4.1',
     id: 'glm-4.1v-thinking-flash',
     maxOutput: 32_768,
     pricing: {
@@ -754,6 +976,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'GLM-Zero-Preview delivers strong complex reasoning, excelling in logic, math, and programming.',
     displayName: 'GLM-Zero-Preview',
+    family: 'glm',
+    generation: 'glm-zero',
     id: 'glm-zero-preview',
     pricing: {
       currency: 'CNY',
@@ -772,6 +996,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     contextWindowTokens: 131_072,
     description: 'Reasoning model with strong reasoning for tasks that require deep inference.',
     displayName: 'GLM-Z1-Air',
+    family: 'glm',
+    generation: 'glm-z1',
     id: 'glm-z1-air',
     maxOutput: 32_768,
     pricing: {
@@ -794,6 +1020,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     contextWindowTokens: 32_768,
     description: 'Ultra-fast reasoning with high reasoning quality.',
     displayName: 'GLM-Z1-AirX',
+    family: 'glm',
+    generation: 'glm-z1',
     id: 'glm-z1-airx',
     maxOutput: 32_768,
     pricing: {
@@ -817,6 +1045,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'Fast and low-cost: Flash-enhanced with ultra-fast reasoning and higher concurrency.',
     displayName: 'GLM-Z1-FlashX',
+    family: 'glm',
+    generation: 'glm-z1',
     id: 'glm-z1-flashx',
     maxOutput: 32_768,
     pricing: {
@@ -840,6 +1070,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'GLM-Z1 series provides strong complex reasoning, excelling in logic, math, and programming.',
     displayName: 'GLM-Z1-Flash',
+    family: 'glm',
+    generation: 'glm-z1',
     id: 'glm-z1-flash',
     maxOutput: 32_768,
     pricing: {
@@ -862,6 +1094,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     contextWindowTokens: 131_072,
     description: 'GLM-4-Flash is ideal for simple tasks: fastest and free.',
     displayName: 'GLM-4-Flash-250414',
+    family: 'glm',
+    generation: 'glm-4',
     id: 'glm-4-flash-250414',
     maxOutput: 32_768,
     pricing: {
@@ -884,6 +1118,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     contextWindowTokens: 131_072,
     description: 'GLM-4-FlashX is an enhanced Flash version with ultra-fast reasoning.',
     displayName: 'GLM-4-FlashX-250414',
+    family: 'glm',
+    generation: 'glm-4',
     id: 'glm-4-flashx',
     maxOutput: 4095,
     pricing: {
@@ -907,6 +1143,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'GLM-4-Long supports ultra-long inputs for memory-style tasks and large-scale document processing.',
     displayName: 'GLM-4-Long',
+    family: 'glm',
+    generation: 'glm-4',
     id: 'glm-4-long',
     maxOutput: 4095,
     pricing: {
@@ -930,6 +1168,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'GLM-4-Air is a high-value option with performance close to GLM-4, fast speed, and lower cost.',
     displayName: 'GLM-4-Air-250414',
+    family: 'glm',
+    generation: 'glm-4',
     id: 'glm-4-air-250414',
     maxOutput: 16_384,
     pricing: {
@@ -953,6 +1193,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'GLM-4-AirX is a more efficient GLM-4-Air variant with up to 2.6x faster reasoning.',
     displayName: 'GLM-4-AirX',
+    family: 'glm',
+    generation: 'glm-4',
     id: 'glm-4-airx',
     maxOutput: 4095,
     pricing: {
@@ -976,6 +1218,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'GLM-4-Plus is a high-intelligence flagship with strong long-text and complex-task handling and upgraded overall performance.',
     displayName: 'GLM-4-Plus',
+    family: 'glm',
+    generation: 'glm-4',
     id: 'glm-4-plus',
     maxOutput: 4095,
     pricing: {
@@ -1020,6 +1264,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'GLM-4V-Flash focuses on efficient single-image understanding for fast analysis scenarios such as real-time or batch image processing.',
     displayName: 'GLM-4V-Flash',
+    family: 'glm',
+    generation: 'glm-4',
     id: 'glm-4v-flash',
     maxOutput: 1024,
     pricing: {
@@ -1040,6 +1286,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'GLM-4V-Plus understands video and multiple images, suitable for multimodal tasks.',
     displayName: 'GLM-4V-Plus-0111',
+    family: 'glm',
+    generation: 'glm-4',
     id: 'glm-4v-plus-0111',
     maxOutput: 8192,
     pricing: {
@@ -1058,6 +1306,8 @@ const zhipuChatModels: AIChatModelCard[] = [
     contextWindowTokens: 4096,
     description: 'GLM-4V provides strong image understanding and reasoning across visual tasks.',
     displayName: 'GLM-4V',
+    family: 'glm',
+    generation: 'glm-4',
     id: 'glm-4v',
     maxOutput: 1024,
     pricing: {
@@ -1074,6 +1324,7 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'CodeGeeX-4 is a powerful AI coding assistant that supports multilingual Q&A and code completion to boost developer productivity.',
     displayName: 'CodeGeeX-4',
+    family: 'codegeex',
     id: 'codegeex-4',
     maxOutput: 32_768,
     pricing: {
@@ -1090,6 +1341,7 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'CharGLM-4 is built for roleplay and emotional companionship, supporting ultra-long multi-turn memory and personalized dialogue.',
     displayName: 'CharGLM-4',
+    family: 'charglm',
     id: 'charglm-4',
     maxOutput: 4000,
     pricing: {
@@ -1106,6 +1358,7 @@ const zhipuChatModels: AIChatModelCard[] = [
     description:
       'Emohaa is a mental health model with professional counseling abilities to help users understand emotional issues.',
     displayName: 'Emohaa',
+    family: 'emohaa',
     id: 'emohaa',
     maxOutput: 4000,
     pricing: {
@@ -1130,6 +1383,10 @@ const zhipuImageModels: AIImageModelCard[] = [
       prompt: {
         default: '',
       },
+      resolution: {
+        default: 'hd',
+        enum: ['hd'],
+      },
       size: {
         default: '1280x1280',
         enum: [
@@ -1142,6 +1399,7 @@ const zhipuImageModels: AIImageModelCard[] = [
           '960x1728',
         ],
       },
+      watermark: { default: false },
     },
     pricing: {
       currency: 'CNY',
@@ -1160,10 +1418,15 @@ const zhipuImageModels: AIImageModelCard[] = [
       prompt: {
         default: '',
       },
+      resolution: {
+        default: 'standard',
+        enum: ['hd', 'standard'],
+      },
       size: {
         default: '1024x1024',
         enum: ['1024x1024', '768x1344', '864x1152', '1344x768', '1152x864', '1440x720', '720x1440'],
       },
+      watermark: { default: false },
     },
     pricing: {
       currency: 'CNY',
@@ -1182,10 +1445,15 @@ const zhipuImageModels: AIImageModelCard[] = [
       prompt: {
         default: '',
       },
+      resolution: {
+        default: 'standard',
+        enum: ['hd', 'standard'],
+      },
       size: {
         default: '1024x1024',
         enum: ['1024x1024', '768x1344', '864x1152', '1344x768', '1152x864', '1440x720', '720x1440'],
       },
+      watermark: { default: false },
     },
     pricing: {
       currency: 'CNY',
@@ -1195,6 +1463,290 @@ const zhipuImageModels: AIImageModelCard[] = [
   },
 ];
 
-export const allModels = [...zhipuChatModels, ...zhipuImageModels];
+const zhipuVideoModels: AIVideoModelCard[] = [
+  {
+    description:
+      'Vidu 2 is a video generation foundation model designed to balance speed and quality. It focuses on image-to-video generation and start–end frame control, supporting 4-second videos at 720P resolution. The generation speed is significantly improved while costs are substantially reduced. Image-to-video generation fixes previous color shift issues, delivering stable and controllable visuals suitable for e-commerce and similar applications. In addition, semantic understanding of start and end frames and consistency across multiple reference images have been enhanced, making it an efficient tool for large-scale content production in general entertainment, internet media, animated short dramas, and advertising.',
+    displayName: 'Vidu 2 Reference',
+    enabled: true,
+    id: 'vidu2-reference',
+    parameters: {
+      aspectRatio: {
+        default: '16:9',
+        enum: ['16:9', '9:16', '1:1'],
+      },
+      duration: { default: 4, enum: [4] },
+      generateAudio: { default: true },
+      imageUrls: {
+        default: [],
+        maxCount: 3,
+      },
+      prompt: { default: '' },
+      size: {
+        default: '1280x720',
+        enum: ['1280x720'],
+      },
+    },
+    pricing: {
+      currency: 'CNY',
+      units: [{ name: 'videoGeneration', rate: 1.25, strategy: 'fixed', unit: 'video' }],
+    },
+    releasedAt: '2025-06-18',
+    type: 'video',
+  },
+  {
+    description:
+      'Vidu 2 is a video generation foundation model designed to balance speed and quality. It focuses on image-to-video generation and start–end frame control, supporting 4-second videos at 720P resolution. The generation speed is significantly improved while costs are substantially reduced. Image-to-video generation fixes previous color shift issues, delivering stable and controllable visuals suitable for e-commerce and similar applications. In addition, semantic understanding of start and end frames and consistency across multiple reference images have been enhanced, making it an efficient tool for large-scale content production in general entertainment, internet media, animated short dramas, and advertising.',
+    displayName: 'Vidu 2 Start End',
+    enabled: true,
+    id: 'vidu2-start-end',
+    parameters: {
+      duration: { default: 5, enum: [5] },
+      endImageUrl: {
+        default: null,
+      },
+      generateAudio: { default: true },
+      imageUrl: {
+        default: null,
+      },
+      prompt: { default: '' },
+      size: {
+        default: '1920x1080',
+        enum: ['1920x1080'],
+      },
+    },
+    pricing: {
+      currency: 'CNY',
+      units: [{ name: 'videoGeneration', rate: 1.25, strategy: 'fixed', unit: 'video' }],
+    },
+    releasedAt: '2025-06-18',
+    type: 'video',
+  },
+  {
+    description:
+      'Vidu Q1 is Vidu’s next-generation video generation foundation model, focused on high-quality video creation. It produces content with fixed specifications of 5 seconds, 24 FPS, and 1080P resolution. Through deep optimization of visual clarity, the overall image quality and texture are significantly improved, while issues such as hand deformation and frame jitter are greatly reduced. The realistic style closely approaches real-world scenes, and 2D animation styles are preserved with high fidelity. Transitions between start and end frames are smoother, making it well suited for high-demand creative scenarios such as film production, advertising, and animated short dramas.',
+    displayName: 'Vidu Q1 Start End',
+    id: 'viduq1-start-end',
+    parameters: {
+      duration: { default: 5, enum: [5] },
+      endImageUrl: {
+        default: null,
+      },
+      generateAudio: { default: true },
+      imageUrl: {
+        default: null,
+      },
+      prompt: { default: '' },
+      size: {
+        default: '1920x1080',
+        enum: ['1920x1080'],
+      },
+    },
+    pricing: {
+      currency: 'CNY',
+      units: [{ name: 'videoGeneration', rate: 2.5, strategy: 'fixed', unit: 'video' }],
+    },
+    releasedAt: '2025-06-18',
+    type: 'video',
+  },
+  {
+    description:
+      'Vidu 2 is a video generation foundation model designed to balance speed and quality. It focuses on image-to-video generation and start–end frame control, supporting 4-second videos at 720P resolution. The generation speed is significantly improved while costs are substantially reduced. Image-to-video generation fixes previous color shift issues, delivering stable and controllable visuals suitable for e-commerce and similar applications. In addition, semantic understanding of start and end frames and consistency across multiple reference images have been enhanced, making it an efficient tool for large-scale content production in general entertainment, internet media, animated short dramas, and advertising.',
+    displayName: 'Vidu 2 Image',
+    enabled: true,
+    id: 'vidu2-image',
+    parameters: {
+      aspectRatio: {
+        default: '16:9',
+        enum: ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'],
+      },
+      duration: { default: 5, enum: [5] },
+      generateAudio: { default: true },
+      imageUrl: {
+        default: null,
+      },
+      prompt: { default: '' },
+      size: {
+        default: '1920x1080',
+        enum: ['1920x1080'],
+      },
+    },
+    pricing: {
+      currency: 'CNY',
+      units: [{ name: 'videoGeneration', rate: 1.25, strategy: 'fixed', unit: 'video' }],
+    },
+    releasedAt: '2025-06-18',
+    type: 'video',
+  },
+  {
+    description:
+      'Vidu Q1 is Vidu’s next-generation video generation foundation model, focused on high-quality video creation. It produces content with fixed specifications of 5 seconds, 24 FPS, and 1080P resolution. Through deep optimization of visual clarity, the overall image quality and texture are significantly improved, while issues such as hand deformation and frame jitter are greatly reduced. The realistic style closely approaches real-world scenes, and 2D animation styles are preserved with high fidelity. Transitions between start and end frames are smoother, making it well suited for high-demand creative scenarios such as film production, advertising, and animated short dramas.',
+    displayName: 'Vidu Q1 Image',
+    id: 'viduq1-image',
+    parameters: {
+      aspectRatio: {
+        default: '16:9',
+        enum: ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'],
+      },
+      duration: { default: 5, enum: [5] },
+      generateAudio: { default: true },
+      imageUrl: {
+        default: null,
+      },
+      prompt: { default: '' },
+      size: {
+        default: '1920x1080',
+        enum: ['1920x1080'],
+      },
+    },
+    pricing: {
+      currency: 'CNY',
+      units: [{ name: 'videoGeneration', rate: 2.5, strategy: 'fixed', unit: 'video' }],
+    },
+    releasedAt: '2025-06-18',
+    type: 'video',
+  },
+  {
+    description:
+      'Vidu Q1 is Vidu’s next-generation video generation foundation model, focused on high-quality video creation. It produces content with fixed specifications of 5 seconds, 24 FPS, and 1080P resolution. Through deep optimization of visual clarity, the overall image quality and texture are significantly improved, while issues such as hand deformation and frame jitter are greatly reduced. The realistic style closely approaches real-world scenes, and 2D animation styles are preserved with high fidelity. Transitions between start and end frames are smoother, making it well suited for high-demand creative scenarios such as film production, advertising, and animated short dramas.',
+    displayName: 'Vidu Q1 Text',
+    enabled: true,
+    id: 'viduq1-text',
+    parameters: {
+      aspectRatio: {
+        default: '16:9',
+        enum: ['16:9', '9:16', '1:1'],
+      },
+      duration: { default: 5, enum: [5] },
+      prompt: { default: '' },
+      size: {
+        default: '1920x1080',
+        enum: ['1920x1080'],
+      },
+    },
+    pricing: {
+      currency: 'CNY',
+      units: [{ name: 'videoGeneration', rate: 2.5, strategy: 'fixed', unit: 'video' }],
+    },
+    releasedAt: '2025-06-18',
+    type: 'video',
+  },
+  {
+    description:
+      'CogVideoX-3 adds a start-and-end frame generation feature, significantly improving visual stability and clarity. It enables smooth and natural large-scale subject motion, offers better instruction adherence and more realistic physical simulation, and further enhances performance in high-definition realistic and 3D-style scenes.',
+    displayName: 'CogVideoX-3',
+    enabled: true,
+    id: 'cogvideox-3',
+    parameters: {
+      duration: { default: 5, enum: [5, 10] },
+      endImageUrl: {
+        default: null,
+      },
+      generateAudio: { default: true },
+      imageUrl: {
+        default: null,
+      },
+      prompt: { default: '' },
+      resolution: {
+        default: 'speed',
+        enum: ['speed', 'quality'],
+      },
+      size: {
+        default: '1920x1080',
+        enum: [
+          '1280x720',
+          '720x1280',
+          '1024x1024',
+          '1920x1080',
+          '1080x1920',
+          '2048x1080',
+          '3840x2160',
+        ],
+      },
+      watermark: { default: false },
+    },
+    pricing: {
+      currency: 'CNY',
+      units: [{ name: 'videoGeneration', rate: 1, strategy: 'fixed', unit: 'video' }],
+    },
+    releasedAt: '2025-07-15',
+    type: 'video',
+  },
+  {
+    description:
+      'CogVideoX-2 is Zhipu’s new-generation video generation foundation model, with image-to-video capabilities improved by 38%. It delivers significant enhancements in large-scale motion handling, visual stability, instruction adherence, artistic style, and overall visual aesthetics.',
+    displayName: 'CogVideoX-2',
+    id: 'cogvideox-2',
+    parameters: {
+      generateAudio: { default: true },
+      imageUrl: {
+        default: null,
+      },
+      prompt: { default: '' },
+      resolution: {
+        default: 'speed',
+        enum: ['speed', 'quality'],
+      },
+      size: {
+        default: '1920x1080',
+        enum: [
+          '720x480',
+          '1024x1024',
+          '1280x960',
+          '960x1280',
+          '1920x1080',
+          '1080x1920',
+          '2048x1080',
+          '3840x2160',
+        ],
+      },
+      watermark: { default: false },
+    },
+    pricing: {
+      currency: 'CNY',
+      units: [{ name: 'videoGeneration', rate: 0.5, strategy: 'fixed', unit: 'video' }],
+    },
+    type: 'video',
+  },
+  {
+    description:
+      'CogVideoX-Flash is a free video generation model released by Zhipu, capable of generating videos that follow user instructions while achieving higher aesthetic quality scores.',
+    displayName: 'CogVideoX-Flash',
+    enabled: true,
+    id: 'cogvideox-flash',
+    parameters: {
+      generateAudio: { default: true },
+      imageUrl: {
+        default: null,
+      },
+      prompt: { default: '' },
+      resolution: {
+        default: 'speed',
+        enum: ['speed', 'quality'],
+      },
+      size: {
+        default: '1920x1080',
+        enum: [
+          '720x480',
+          '1024x1024',
+          '1280x960',
+          '960x1280',
+          '1920x1080',
+          '1080x1920',
+          '2048x1080',
+          '3840x2160',
+        ],
+      },
+      watermark: { default: false },
+    },
+    pricing: {
+      currency: 'CNY',
+      units: [{ name: 'videoGeneration', rate: 0, strategy: 'fixed', unit: 'video' }],
+    },
+    type: 'video',
+  },
+];
+
+export const allModels = [...zhipuChatModels, ...zhipuImageModels, ...zhipuVideoModels];
 
 export default allModels;

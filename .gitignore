@@ -25,6 +25,12 @@ Desktop.ini
 *.code-workspace
 .vscode/sessions.json
 prd
+# Recordings
+.records/
+
+# Agent-gateway probe captures (local debugging dumps)
+.agent-gateway/
+
 # Temporary files
 .temp/
 temp/
@@ -52,6 +58,8 @@ bun.lockb
 
 # Build outputs
 dist/
+public/_spa/
+public/_spa-auth/
 public/spa/
 es/
 lib/
@@ -85,14 +93,12 @@ public/swe-worker*
 
 # Generated files
 src/app/spa/[variants]/[[...path]]/spaHtmlTemplates.ts
+src/app/spa-auth/authHtmlTemplate.ts
 public/*.js
-public/sitemap.xml
-public/sitemap-index.xml
-sitemap*.xml
 robots.txt
 
 # Git hooks
-.husky/prepare-commit-msg
+.githooks/prepare-commit-msg
 
 # Documents and media
 *.pdf
@@ -102,6 +108,7 @@ vertex-ai-key.json
 
 # Agent tracing snapshots
 .agent-tracing/
+.llm-generation-tracing/
 
 # AI coding tools
 .local/
@@ -135,3 +142,15 @@ i18n-unused-keys-report.json
 pnpm-lock.yaml
 .turbo
 spaHtmlTemplates.ts
+
+# Embedded CLI bundle (built at pack time)
+apps/desktop/resources/bin/lobe-cli.js
+apps/desktop/resources/cli-package.json
+
+# Superpowers plugin brainstorm/spec outputs (local only; do not commit)
+.superpowers/
+docs/superpowers/
+.heerogeneous-tracing
+
+# Kagura agent runtime
+.kagura/

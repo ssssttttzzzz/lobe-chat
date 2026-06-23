@@ -1,18 +1,21 @@
 'use client';
 
 import { Flexbox } from '@lobehub/ui';
-import { App, Button, Card, Progress, Typography } from 'antd';
-import { RotateCcw } from 'lucide-react';
+import { confirmModal } from '@lobehub/ui/base-ui';
+import { Button, Card, Progress, Typography } from 'antd';
+import { Play, RotateCcw } from 'lucide-react';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 
 import { runSelectors, useEvalStore } from '@/store/eval';
 
+import { createBatchResumeModal } from './features/BatchResumeModal';
 import CaseResultsTable from './features/CaseResultsTable';
 import BenchmarkCharts from './features/Charts/BenchmarkCharts';
 import IdleState from './features/IdleState';
 import PendingState from './features/PendingState';
+import { getResumeTarget } from './features/resumeTarget';
 import RunHeader from './features/RunHeader';
 import RunningState from './features/RunningState';
 import StatsCards from './features/StatsCards';
@@ -21,12 +24,13 @@ const POLLING_INTERVAL = 3000;
 
 const RunDetail = memo(() => {
   const { t } = useTranslation('eval');
-  const { modal } = App.useApp();
   const { benchmarkId, runId } = useParams<{ benchmarkId: string; runId: string }>();
   const useFetchRunDetail = useEvalStore((s) => s.useFetchRunDetail);
   const useFetchRunResults = useEvalStore((s) => s.useFetchRunResults);
   const retryRunErrors = useEvalStore((s) => s.retryRunErrors);
   const retryRunCase = useEvalStore((s) => s.retryRunCase);
+  const resumeRunCase = useEvalStore((s) => s.resumeRunCase);
+  const batchResumeRunCases = useEvalStore((s) => s.batchResumeRunCases);
   const runDetail = useEvalStore(runSelectors.getRunDetailById(runId!));
   const runResults = useEvalStore(runSelectors.getRunResultsById(runId!));
   const isActive = useEvalStore(runSelectors.isRunActive(runId!));
@@ -52,6 +56,11 @@ const RunDetail = memo(() => {
   const showProgress = totalCases > 0 && progress < 100;
   const errorCount = (metrics?.errorCases ?? 0) + (metrics?.timeoutCases ?? 0);
   const canRetry = isFinished && errorCount > 0;
+
+  const k = runDetail.config?.k ?? 1;
+  const canBatchResume = (runResults?.results ?? []).some(
+    (result: any) => !!getResumeTarget(result, k),
+  );
 
   return (
     <Flexbox gap={24} padding={24} style={{ margin: '0 auto', maxWidth: 1440, width: '100%' }}>
@@ -118,44 +127,66 @@ const RunDetail = memo(() => {
         <Card
           styles={{ body: { padding: 0 }, header: { padding: '12px 20px' } }}
           extra={
-            showProgress ? (
+            showProgress || canRetry || canBatchResume ? (
               <Flexbox horizontal align="center" gap={8}>
-                <Typography.Text style={{ fontSize: 12, whiteSpace: 'nowrap' }} type="secondary">
-                  {completedCases}/{totalCases} {t('run.detail.progressCases')}
-                </Typography.Text>
-                <Progress
-                  percent={progress}
-                  showInfo={false}
-                  size="small"
-                  status={isActive ? 'active' : undefined}
-                  style={{ margin: 0, width: 120 }}
-                />
-                <Typography.Text style={{ fontSize: 12 }} type="secondary">
-                  {progress}%
-                </Typography.Text>
+                {showProgress && (
+                  <>
+                    <Typography.Text
+                      style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+                      type="secondary"
+                    >
+                      {completedCases}/{totalCases} {t('run.detail.progressCases')}
+                    </Typography.Text>
+                    <Progress
+                      percent={progress}
+                      showInfo={false}
+                      size="small"
+                      status={isActive ? 'active' : undefined}
+                      style={{ margin: 0, width: 120 }}
+                    />
+                    <Typography.Text style={{ fontSize: 12 }} type="secondary">
+                      {progress}%
+                    </Typography.Text>
+                  </>
+                )}
+                {canBatchResume && (
+                  <Button
+                    icon={<Play size={14} />}
+                    size="small"
+                    onClick={() =>
+                      createBatchResumeModal({
+                        onConfirm: (targets) => batchResumeRunCases(runId!, targets),
+                        runId: runId!,
+                      })
+                    }
+                  >
+                    {t('run.actions.batchResume')}
+                  </Button>
+                )}
+                {canRetry && (
+                  <Button
+                    icon={<RotateCcw size={14} />}
+                    loading={retrying}
+                    size="small"
+                    onClick={() => {
+                      confirmModal({
+                        content: t('run.actions.retryErrors.confirm'),
+                        onOk: async () => {
+                          setRetrying(true);
+                          try {
+                            await retryRunErrors(runId!);
+                          } finally {
+                            setRetrying(false);
+                          }
+                        },
+                        title: t('run.actions.retryErrors'),
+                      });
+                    }}
+                  >
+                    {t('run.actions.retryErrors')}
+                  </Button>
+                )}
               </Flexbox>
-            ) : canRetry ? (
-              <Button
-                icon={<RotateCcw size={14} />}
-                loading={retrying}
-                size="small"
-                onClick={() => {
-                  modal.confirm({
-                    content: t('run.actions.retryErrors.confirm'),
-                    onOk: async () => {
-                      setRetrying(true);
-                      try {
-                        await retryRunErrors(runId!);
-                      } finally {
-                        setRetrying(false);
-                      }
-                    },
-                    title: t('run.actions.retryErrors'),
-                  });
-                }}
-              >
-                {t('run.actions.retryErrors')}
-              </Button>
             ) : undefined
           }
           title={
@@ -166,10 +197,11 @@ const RunDetail = memo(() => {
         >
           <CaseResultsTable
             benchmarkId={benchmarkId!}
-            k={runDetail.config?.k ?? 1}
+            k={k}
             results={runResults.results}
             runId={runId!}
             runStatus={runDetail.status}
+            onResumeCase={(testCaseId, threadId) => resumeRunCase(runId!, testCaseId, threadId)}
             onRetryCase={(testCaseId) => retryRunCase(runId!, testCaseId)}
           />
         </Card>

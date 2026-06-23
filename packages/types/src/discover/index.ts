@@ -1,5 +1,7 @@
 import type { DiscoverAssistantItem } from './assistants';
 import type { DiscoverGroupAgentItem } from './groupAgents';
+import type { DiscoverPluginItem } from './plugins';
+import type { DiscoverSkillItem } from './skills';
 
 export * from './assistants';
 export * from './fork';
@@ -20,6 +22,7 @@ export enum DiscoverTab {
   Providers = 'provider',
   Skills = 'skill',
   User = 'user',
+  Workspace = 'workspace',
 }
 
 export type IdentifiersResponse = {
@@ -86,5 +89,13 @@ export interface DiscoverUserProfile {
    * Agents forked by the user
    */
   forkedAgents?: DiscoverAssistantItem[];
+  /**
+   * Plugins owned by the user
+   */
+  plugins?: DiscoverPluginItem[];
+  /**
+   * Skills owned by the user
+   */
+  skills?: DiscoverSkillItem[];
   user: DiscoverUserInfo;
 }

@@ -1,7 +1,10 @@
+import path from 'node:path';
+
 import type { MenuItemConstructorOptions } from 'electron';
 import { app, clipboard, Menu, shell } from 'electron';
 
 import { isDev } from '@/const/env';
+import { HETERO_AGENT_DIR } from '@/const/heteroAgent';
 
 import type { ContextMenuData, IMenuPlatform, MenuOptions } from '../types';
 import { BaseMenuPlatform } from './BaseMenuPlatform';
@@ -63,6 +66,15 @@ export class WindowsMenu extends BaseMenuPlatform implements IMenuPlatform {
             },
             label: t('file.newTopic'),
           },
+          {
+            accelerator: 'Ctrl+T',
+            click: () => {
+              const mainWindow = this.app.browserManager.getMainWindow();
+              mainWindow.show();
+              mainWindow.broadcast('createNewTab');
+            },
+            label: t('file.newTab'),
+          },
           { type: 'separator' },
           {
             accelerator: 'Alt+Ctrl+A',
@@ -93,7 +105,11 @@ export class WindowsMenu extends BaseMenuPlatform implements IMenuPlatform {
           },
           { type: 'separator' },
           {
-            click: () => this.app.browserManager.retrieveByIdentifier('settings').show(),
+            click: async () => {
+              const mainWindow = this.app.browserManager.getMainWindow();
+              mainWindow.show();
+              mainWindow.broadcast('navigate', { path: '/settings' });
+            },
             label: t('file.preferences'),
           },
           this.getUpdateMenuItem(t),
@@ -126,9 +142,9 @@ export class WindowsMenu extends BaseMenuPlatform implements IMenuPlatform {
         submenu: [
           { accelerator: 'F12', label: t('dev.devTools'), role: 'toggleDevTools' },
           { type: 'separator' },
-          { label: t('view.resetZoom'), role: 'resetZoom' },
-          { label: t('view.zoomIn'), role: 'zoomIn' },
-          { label: t('view.zoomOut'), role: 'zoomOut' },
+          this.buildZoomMenuItem('reset', t('view.resetZoom'), 'CmdOrCtrl+0'),
+          ...this.buildZoomMenuItems('in', t('view.zoomIn'), 'CmdOrCtrl+=', ['CmdOrCtrl+Plus']),
+          this.buildZoomMenuItem('out', t('view.zoomOut'), 'CmdOrCtrl+-'),
           { type: 'separator' },
           { label: t('view.toggleFullscreen'), role: 'togglefullscreen' },
         ],
@@ -167,7 +183,11 @@ export class WindowsMenu extends BaseMenuPlatform implements IMenuPlatform {
         label: t('window.title'),
         submenu: [
           { label: t('window.minimize'), role: 'minimize' },
-          { label: t('window.close'), role: 'close' },
+          {
+            accelerator: 'CmdOrCtrl+W',
+            click: (_item, targetWindow) => this.closeFocusedTabOrWindow(targetWindow),
+            label: t('window.close'),
+          },
         ],
       },
       {
@@ -184,6 +204,25 @@ export class WindowsMenu extends BaseMenuPlatform implements IMenuPlatform {
               await shell.openExternal('https://github.com/lobehub/lobe-chat');
             },
             label: t('help.githubRepo'),
+          },
+          { type: 'separator' },
+          {
+            click: () => {
+              const heteroAgentPath = path.join(this.app.appStoragePath, HETERO_AGENT_DIR);
+              console.info(`[Menu] Opening HeteroAgent directory: ${heteroAgentPath}`);
+              shell.openPath(heteroAgentPath).catch((err) => {
+                console.error(`[Menu] Error opening path ${heteroAgentPath}:`, err);
+              });
+            },
+            label: t('help.openHeteroAgentDir'),
+          },
+          {
+            checked: this.app.storeManager.get('heteroTracingEnabled', false),
+            click: (item) => {
+              this.app.storeManager.set('heteroTracingEnabled', item.checked);
+            },
+            label: t('help.toggleHeteroTracing'),
+            type: 'checkbox',
           },
         ],
       },
@@ -440,10 +479,22 @@ export class WindowsMenu extends BaseMenuPlatform implements IMenuPlatform {
         click: () => this.app.browserManager.showMainWindow(),
         label: t('tray.open', { appName }),
       },
+      {
+        click: () => this.app.screenCaptureManager.startSession(),
+        label: t('tray.openMiniToolbar'),
+      },
+      {
+        click: () => this.app.browserManager.openQuickChatPopup(),
+        label: t('tray.quickChat'),
+      },
       { type: 'separator' },
       {
-        click: () => this.app.browserManager.retrieveByIdentifier('settings').show(),
-        label: t('file.preferences'),
+        click: async () => {
+          const mainWindow = this.app.browserManager.getMainWindow();
+          mainWindow.show();
+          mainWindow.broadcast('navigate', { path: '/settings' });
+        },
+        label: t('tray.settings'),
       },
       { type: 'separator' },
       { label: t('tray.quit'), role: 'quit' },

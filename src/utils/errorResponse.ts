@@ -29,8 +29,10 @@ const getStatus = (errorType: ILobeAgentRuntimeErrorType | ErrorType) => {
     }
 
     case AgentRuntimeErrorType.ExceededContextWindow:
+    case AgentRuntimeErrorType.ExceededToolLimit:
     case ChatErrorType.SubscriptionKeyMismatch:
-    case ChatErrorType.SystemTimeNotMatchError: {
+    case ChatErrorType.SystemTimeNotMatchError:
+    case ChatErrorType.LobeHubModelDeprecated: {
       return 400;
     }
 
@@ -40,6 +42,10 @@ const getStatus = (errorType: ILobeAgentRuntimeErrorType | ErrorType) => {
 
     case AgentRuntimeErrorType.ModelNotFound: {
       return 404;
+    }
+
+    case AgentRuntimeErrorType.AccountDeactivated: {
+      return 403;
     }
 
     case AgentRuntimeErrorType.InsufficientQuota:
@@ -52,7 +58,8 @@ const getStatus = (errorType: ILobeAgentRuntimeErrorType | ErrorType) => {
       return 470;
     }
 
-    case AgentRuntimeErrorType.ProviderBizError: {
+    case AgentRuntimeErrorType.ProviderBizError:
+    case AgentRuntimeErrorType.ProviderContentPolicyViolation: {
       return 471;
     }
 

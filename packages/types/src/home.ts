@@ -32,11 +32,25 @@ export interface SidebarAgentItem {
    * Only present for chat groups (type === 'group')
    */
   groupAvatar?: string | null;
+  /**
+   * Heterogeneous agent runtime type (e.g. `claude-code`) when the agent is
+   * driven by an external CLI. `null` / absent means it's a regular LobeHub
+   * agent. Present so sidebar / list items can render an "External" tag
+   * without per-item agent config lookups.
+   */
+  heterogeneousType?: string | null;
   id: string;
   pinned: boolean;
   sessionId?: string | null;
   title: string | null;
   type: SidebarItemType;
+  /**
+   * Number of topics with an unread completed generation under this agent/group.
+   * Derived server-side from `topics.status === 'unread'` so the sidebar badge
+   * stays accurate across agents the client hasn't loaded topics for. Absent /
+   * 0 means no unread.
+   */
+  unreadCount?: number;
   updatedAt: Date;
 }
 

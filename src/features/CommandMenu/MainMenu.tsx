@@ -1,11 +1,10 @@
 import { SOCIAL_URL } from '@lobechat/business-const';
-import { DiscordIcon } from '@lobehub/ui/icons';
+import { DiscordIcon, GithubIcon } from '@lobehub/ui/icons';
 import { Command } from 'cmdk';
 import {
   Bot,
   FeatherIcon,
   FilePen,
-  Github,
   LibraryBig,
   MessageSquarePlusIcon,
   Monitor,
@@ -14,9 +13,10 @@ import {
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { openFeedbackModal } from '@/components/FeedbackModal';
 import { getNavigableRoutes, getRouteById } from '@/config/routes';
 import { FEEDBACK } from '@/const/url';
-import { useFeedbackModal } from '@/hooks/useFeedbackModal';
+import { usePermission } from '@/hooks/usePermission';
 
 import { useCommandMenuContext } from './CommandMenuContext';
 import { CommandItem } from './components';
@@ -24,9 +24,9 @@ import ContextCommands from './ContextCommands';
 import { useCommandMenu } from './useCommandMenu';
 
 const MainMenu = memo(() => {
-  const { pathname, menuContext, setPages, pages } = useCommandMenuContext();
+  const { pathname, menuContext, setPages, pages, onClose } = useCommandMenuContext();
   const { t } = useTranslation('common');
-  const { open: openFeedbackModal } = useFeedbackModal();
+  const { allowed: canCreate } = usePermission('create_content');
 
   const {
     handleCreateSession,
@@ -44,6 +44,7 @@ const MainMenu = memo(() => {
 
       <Command.Group>
         <CommandItem
+          disabled={!canCreate}
           icon={<Bot />}
           unpinned={menuContext === 'agent' || menuContext === 'page'}
           value="create new agent assistant"
@@ -53,6 +54,7 @@ const MainMenu = memo(() => {
         </CommandItem>
 
         <CommandItem
+          disabled={!canCreate}
           icon={<Bot />}
           unpinned={menuContext === 'agent' || menuContext === 'page'}
           value="create new agent team"
@@ -63,6 +65,7 @@ const MainMenu = memo(() => {
 
         {menuContext === 'agent' && (
           <CommandItem
+            disabled={!canCreate}
             icon={<MessageSquarePlusIcon />}
             unpinned={menuContext !== 'agent'}
             value="create new topic"
@@ -72,11 +75,17 @@ const MainMenu = memo(() => {
           </CommandItem>
         )}
 
-        <CommandItem icon={<FilePen />} value="create new page" onSelect={handleCreatePage}>
+        <CommandItem
+          disabled={!canCreate}
+          icon={<FilePen />}
+          value="create new page"
+          onSelect={handleCreatePage}
+        >
           {t('cmdk.newPage')}
         </CommandItem>
 
         <CommandItem
+          disabled={!canCreate}
           icon={<LibraryBig />}
           unpinned={menuContext !== 'resource'}
           value="create new library"
@@ -140,12 +149,19 @@ const MainMenu = memo(() => {
           icon={<FeatherIcon />}
           keywords={t('cmdk.keywords.contactUs').split(' ')}
           value="contact-via-email"
-          onSelect={() => openFeedbackModal()}
+          onSelect={() => {
+            // Close the palette through the context handler (which runs the exit
+            // animation and clears the local `isVisible` state) before opening the
+            // modal. `openFeedbackModal` only flips the store flag, which alone
+            // doesn't unmount the palette — so without this it stays on screen.
+            onClose();
+            openFeedbackModal();
+          }}
         >
           {t('cmdk.contactUs')}
         </CommandItem>
         <CommandItem
-          icon={<Github />}
+          icon={<GithubIcon />}
           keywords={t('cmdk.keywords.submitIssue').split(' ')}
           value="submit-issue"
           onSelect={() => handleExternalLink(FEEDBACK)}

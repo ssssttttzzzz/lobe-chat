@@ -5,6 +5,8 @@ import isEqual from 'fast-deep-equal';
 import { MoreHorizontal } from 'lucide-react';
 import React, { memo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router';
+import urlJoin from 'url-join';
 
 import NavItem from '@/features/NavPanel/components/NavItem';
 import SkeletonList from '@/features/NavPanel/components/SkeletonList';
@@ -12,24 +14,29 @@ import { useChatStore } from '@/store/chat';
 import { topicSelectors } from '@/store/chat/selectors';
 import { useGlobalStore } from '@/store/global';
 import { systemStatusSelectors } from '@/store/global/selectors';
+import { useUserStore } from '@/store/user';
+import { preferenceSelectors } from '@/store/user/selectors';
 
 import TopicItem from '../../List/Item';
 
 const FlatMode = memo(() => {
   const { t } = useTranslation('topic');
+  const navigate = useNavigate();
   const topicPageSize = useGlobalStore(systemStatusSelectors.topicPageSize);
+  const topicSortBy = useUserStore(preferenceSelectors.topicSortBy);
 
-  const [activeTopicId, activeThreadId, hasMore, isExpandingPageSize, openAllTopicsDrawer] =
-    useChatStore((s) => [
+  const [activeTopicId, activeThreadId, hasMore, isExpandingPageSize, activeAgentId] = useChatStore(
+    (s) => [
       s.activeTopicId,
       s.activeThreadId,
-      topicSelectors.hasMoreTopics(s),
+      topicSelectors.hasMoreTopicsForSidebar(s),
       topicSelectors.isExpandingPageSize(s),
-      s.openAllTopicsDrawer,
-    ]);
+      s.activeAgentId,
+    ],
+  );
 
   const activeTopicList = useChatStore(
-    topicSelectors.displayTopicsForSidebar(topicPageSize),
+    topicSelectors.displayTopicsForSidebar(topicPageSize, topicSortBy),
     isEqual,
   );
 
@@ -42,13 +49,18 @@ const FlatMode = memo(() => {
           id={topic.id}
           key={topic.id}
           metadata={topic.metadata}
+          status={topic.status}
           threadId={activeThreadId}
           title={topic.title}
         />
       ))}
       {isExpandingPageSize && <SkeletonList rows={3} />}
-      {hasMore && !isExpandingPageSize && (
-        <NavItem icon={MoreHorizontal} title={t('loadMore')} onClick={openAllTopicsDrawer} />
+      {hasMore && !isExpandingPageSize && activeAgentId && (
+        <NavItem
+          icon={MoreHorizontal}
+          title={t('loadMore')}
+          onClick={() => navigate(urlJoin('/agent', activeAgentId, 'topics'))}
+        />
       )}
     </Flexbox>
   );

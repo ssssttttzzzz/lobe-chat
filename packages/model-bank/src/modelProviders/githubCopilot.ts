@@ -2,12 +2,13 @@ import type { ModelProviderCard } from '@/types/llm';
 
 const GithubCopilot: ModelProviderCard = {
   chatModels: [],
-  checkModel: 'gpt-4o',
+  checkModel: 'gpt-5-mini',
   description: 'Access Claude, GPT, and Gemini models through your GitHub Copilot subscription.',
   id: 'githubcopilot',
   name: 'GitHub Copilot',
   settings: {
     authType: 'oauthDeviceFlow',
+    maxToolCount: 128,
     oauthDeviceFlow: {
       clientId: 'Iv1.b507a08c87ecfe98',
       defaultPollingInterval: 5,
@@ -19,6 +20,7 @@ const GithubCopilot: ModelProviderCard = {
     sdkType: 'openai',
     showApiKey: false,
     showChecker: true,
+    supportResponsesApi: true,
   },
   url: 'https://github.com/features/copilot',
 };

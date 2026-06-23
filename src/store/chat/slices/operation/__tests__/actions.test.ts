@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { produce } from 'immer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { mergeQueuedMessages } from '@/store/chat/slices/operation/types';
 import { useChatStore } from '@/store/chat/store';
 
 describe('Operation Actions', () => {
@@ -11,6 +12,80 @@ describe('Operation Actions', () => {
 
   afterEach(() => {
     vi.clearAllTimers();
+  });
+
+  describe('mergeQueuedMessages', () => {
+    it('should preserve merged editorData for queued rich text messages', () => {
+      const firstParagraph = {
+        children: [
+          {
+            actionCategory: 'tool',
+            actionLabel: 'Notebook',
+            actionType: 'lobe-notebook',
+            type: 'action-tag',
+          },
+        ],
+        type: 'paragraph',
+      };
+      const secondParagraph = {
+        children: [{ text: 'second message', type: 'text', version: 1 }],
+        type: 'paragraph',
+      };
+
+      const merged = mergeQueuedMessages([
+        {
+          content: 'first message',
+          createdAt: 1,
+          editorData: { root: { children: [firstParagraph], type: 'root', version: 1 } },
+          id: 'q1',
+          interruptMode: 'soft',
+        },
+        {
+          content: 'second message',
+          createdAt: 2,
+          editorData: { root: { children: [secondParagraph], type: 'root', version: 1 } },
+          id: 'q2',
+          interruptMode: 'soft',
+        },
+      ]);
+
+      expect(merged.content).toBe('first message\n\nsecond message');
+      expect(merged.editorData?.root.children).toHaveLength(3);
+      expect(merged.editorData?.root.children[0]).toEqual(firstParagraph);
+      expect(merged.editorData?.root.children[1]).toEqual(
+        expect.objectContaining({ children: [], type: 'paragraph' }),
+      );
+      expect(merged.editorData?.root.children[2]).toEqual(secondParagraph);
+    });
+
+    it('should flatten file ids and filesPreview snapshots from queued messages', () => {
+      const merged = mergeQueuedMessages([
+        {
+          content: 'first',
+          createdAt: 1,
+          files: ['f1'],
+          filesPreview: [{ id: 'f1', mimeType: 'image/png', name: 'a.png', url: 'blob:1' }],
+          id: 'q1',
+          interruptMode: 'soft',
+        },
+        {
+          content: 'second',
+          createdAt: 2,
+          files: ['f2', 'f3'],
+          filesPreview: [
+            { id: 'f2', mimeType: 'image/jpeg', name: 'b.jpg', url: 'blob:2' },
+            { id: 'f3', mimeType: 'application/pdf', name: 'c.pdf', url: 'https://x/c.pdf' },
+          ],
+          id: 'q2',
+          interruptMode: 'soft',
+        },
+      ]);
+
+      expect(merged.files).toEqual(['f1', 'f2', 'f3']);
+      expect(merged.filesPreview).toHaveLength(3);
+      expect(merged.filesPreview[0]).toMatchObject({ id: 'f1', name: 'a.png' });
+      expect(merged.filesPreview[2]).toMatchObject({ id: 'f3', mimeType: 'application/pdf' });
+    });
   });
 
   describe('startOperation', () => {
@@ -1046,6 +1121,31 @@ describe('Operation Actions', () => {
       expect(context.isNew).toBe(true);
     });
 
+    it('should preserve documentId from operation context (page scope)', () => {
+      const { result } = renderHook(() => useChatStore());
+
+      let operationId: string;
+
+      act(() => {
+        operationId = result.current.startOperation({
+          type: 'sendMessage',
+          context: {
+            agentId: 'page-agent',
+            documentId: 'doc-1',
+            scope: 'page',
+          },
+        }).operationId;
+      });
+
+      const context = result.current.internal_getConversationContext({ operationId: operationId! });
+
+      // Dropping documentId here sinks page-scoped optimistic writes into the
+      // `page_<agent>_new` bucket while the editor reads `page_<agent>_doc-1`,
+      // leaving the copilot stuck on the loading skeleton.
+      expect(context.documentId).toBe('doc-1');
+      expect(context.scope).toBe('page');
+    });
+
     it('should fallback to global state when no operationId provided', () => {
       const { result } = renderHook(() => useChatStore());
 
@@ -1066,12 +1166,33 @@ describe('Operation Actions', () => {
       expect(context.groupId).toBe('global-group');
     });
 
-    it('should throw error when operationId is invalid', () => {
+    it('should fall back to global state when operationId is invalid', () => {
       const { result } = renderHook(() => useChatStore());
 
-      expect(() => {
-        result.current.internal_getConversationContext({ operationId: 'invalid-op-id' });
-      }).toThrow('Operation not found');
+      act(() => {
+        useChatStore.setState({
+          activeAgentId: 'fallback-agent',
+          activeTopicId: 'fallback-topic',
+          activeThreadId: 'fallback-thread',
+          activeGroupId: 'fallback-group',
+        });
+      });
+
+      // Long-lived intervention surfaces can outlive the operation they
+      // were started under (op GC'd 30s after runtime_end). The previous
+      // throw would tear down the whole optimistic write chain on Submit;
+      // instead, degrade gracefully to the global state so the IPC submit
+      // can still ship.
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const context = result.current.internal_getConversationContext({
+        operationId: 'invalid-op-id',
+      });
+      expect(context.agentId).toBe('fallback-agent');
+      expect(context.topicId).toBe('fallback-topic');
+      expect(context.threadId).toBe('fallback-thread');
+      expect(context.groupId).toBe('fallback-group');
+      expect(warnSpy).toHaveBeenCalled();
+      warnSpy.mockRestore();
     });
   });
 

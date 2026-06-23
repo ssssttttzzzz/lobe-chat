@@ -1,6 +1,7 @@
 import type {
   Adapter,
   AdapterPostableMessage,
+  Attachment,
   Author,
   ChatInstance,
   EmojiValue,
@@ -13,12 +14,15 @@ import type {
   WebhookOptions,
 } from 'chat';
 import { Message, parseMarkdown } from 'chat';
+import mime from 'mime';
 
 import { QQApiClient } from './api';
 import { signWebhookResponse } from './crypto';
 import { QQFormatConverter } from './format-converter';
+import { QQGatewayConnection } from './gateway';
 import type {
   QQAdapterConfig,
+  QQAttachment,
   QQRawMessage,
   QQThreadId,
   QQWebhookEventData,
@@ -117,9 +121,10 @@ export class QQAdapter implements Adapter<QQThreadId, QQRawMessage> {
       return Response.json({ ok: true });
     }
 
-    // Extract message content
+    // Extract message content — allow through if there are attachments
     const content = eventData.content;
-    if (!content?.trim()) {
+    const hasAttachments = eventData.attachments && eventData.attachments.length > 0;
+    if (!content?.trim() && !hasAttachments) {
       return Response.json({ ok: true });
     }
 
@@ -176,6 +181,33 @@ export class QQAdapter implements Adapter<QQThreadId, QQRawMessage> {
         return null;
       }
     }
+  }
+
+  // ------------------------------------------------------------------
+  // Gateway listener (WebSocket mode)
+  // ------------------------------------------------------------------
+
+  /**
+   * Start a persistent WebSocket gateway connection.
+   * Dispatch events are forwarded to the webhookUrl as HTTP POSTs,
+   * preserving compatibility with the existing handleWebhook() pipeline.
+   */
+  async startGatewayListener(
+    options: { waitUntil: (task: Promise<any>) => void },
+    durationMs: number,
+    abortSignal: AbortSignal,
+    webhookUrl: string,
+  ): Promise<void> {
+    const gateway = new QQGatewayConnection(this.api, {
+      abortSignal,
+      durationMs,
+      log: (msg: string, ...rest: any[]) => this.logger.info(msg, ...rest),
+      webhookUrl,
+    });
+
+    const gatewayTask = gateway.connect();
+    options.waitUntil(gatewayTask);
+    await gatewayTask;
   }
 
   // ------------------------------------------------------------------
@@ -281,8 +313,10 @@ export class QQAdapter implements Adapter<QQThreadId, QQRawMessage> {
       threadId = this.encodeThreadId({ id: raw.author.id, type: 'c2c' });
     }
 
+    const attachments = this.mapQQAttachments(raw.attachments);
+
     return new Message({
-      attachments: [],
+      attachments,
       author: {
         fullName: 'Unknown',
         isBot: false,
@@ -323,6 +357,7 @@ export class QQAdapter implements Adapter<QQThreadId, QQRawMessage> {
     };
 
     const raw: QQRawMessage = {
+      attachments: data.attachments,
       author: data.author || { id: 'unknown' },
       channel_id: data.channel_id,
       content,
@@ -332,8 +367,10 @@ export class QQAdapter implements Adapter<QQThreadId, QQRawMessage> {
       timestamp: data.timestamp || new Date().toISOString(),
     };
 
+    const attachments = this.mapQQAttachments(data.attachments);
+
     return new Message({
-      attachments: [],
+      attachments,
       author,
       formatted,
       id: data.id || '',
@@ -345,6 +382,62 @@ export class QQAdapter implements Adapter<QQThreadId, QQRawMessage> {
       text: cleanText,
       threadId,
     });
+  }
+
+  // ------------------------------------------------------------------
+  // Attachment mapping
+  // ------------------------------------------------------------------
+
+  /**
+   * Map QQ attachments to Chat SDK Attachment objects.
+   * QQ provides direct URLs for media files.
+   */
+  private mapQQAttachments(qqAttachments?: QQAttachment[]): Attachment[] {
+    if (!qqAttachments || qqAttachments.length === 0) return [];
+
+    return qqAttachments.map((a) => {
+      // QQ's `content_type` is not always a real MIME type — for c2c file
+      // attachments it comes back as the coarse category label `"file"`. Trusting
+      // it verbatim mislabels e.g. an `.m4a` as `"file"` instead of `audio/mp4`,
+      // which then defeats the filename-based MIME recovery in ingestAttachment
+      // (that only re-infers for `application/octet-stream`). Fall back to the
+      // filename when content_type isn't a usable MIME type.
+      const mimeType = this.resolveMimeType(a.content_type, a.filename);
+      return {
+        fetchData: () => this.fetchAttachmentData(a.url),
+        height: a.height,
+        mimeType,
+        name: a.filename,
+        size: a.size,
+        type: this.resolveAttachmentType(mimeType),
+        url: a.url,
+        width: a.width,
+      } as Attachment;
+    });
+  }
+
+  /**
+   * Resolve a usable MIME type from QQ's `content_type`, falling back to
+   * filename-based inference when QQ sends a non-MIME value (e.g. `"file"`).
+   */
+  private resolveMimeType(contentType: string | undefined, filename?: string): string {
+    if (contentType && contentType.includes('/')) return contentType;
+    return (filename && mime.getType(filename)) || 'application/octet-stream';
+  }
+
+  private resolveAttachmentType(contentType: string): 'image' | 'video' | 'audio' | 'file' {
+    if (contentType.startsWith('image/')) return 'image';
+    if (contentType.startsWith('video/')) return 'video';
+    if (contentType.startsWith('audio/')) return 'audio';
+    return 'file';
+  }
+
+  private async fetchAttachmentData(url: string): Promise<Buffer> {
+    const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch QQ attachment: ${response.status}`);
+    }
+    return Buffer.from(await response.arrayBuffer());
   }
 
   // ------------------------------------------------------------------

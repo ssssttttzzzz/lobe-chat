@@ -12,6 +12,7 @@ export interface TopicListQuery extends IPaginationQuery {
   agentId?: string | null;
   excludeTriggers?: string[];
   groupId?: string | null;
+  includeTriggers?: string[];
   isInbox?: boolean;
 }
 
@@ -20,6 +21,7 @@ export const TopicListQuerySchema = z
     agentId: z.string().nullish(),
     excludeTriggers: z.array(z.string()).optional(),
     groupId: z.string().nullish(),
+    includeTriggers: z.array(z.string()).optional(),
     isInbox: z
       .string()
       .optional()
@@ -42,7 +44,7 @@ export const TopicCreateRequestSchema = z.object({
   clientId: z.string().optional(),
   favorite: z.boolean().optional(),
   groupId: z.string().nullish(),
-  title: z.string().min(1, '标题不能为空'),
+  title: z.string().min(1, 'Title cannot be empty'),
 });
 
 export interface TopicUpdateRequest {
@@ -59,10 +61,11 @@ export const TopicUpdateRequestSchema = z.object({
     .object({
       model: z.string().optional(),
       provider: z.string().optional(),
+      boundDeviceId: z.string().optional(),
       workingDirectory: z.string().optional(),
     })
     .optional(),
-  title: z.string().min(1, '标题不能为空').optional(),
+  title: z.string().min(1, 'Title cannot be empty').optional(),
 });
 
 // ==================== Topic Response Types ====================
@@ -82,13 +85,13 @@ export type TopicListResponse = PaginationQueryResponse<{
 // ==================== Common Schemas ====================
 
 export const TopicGetParamSchema = z.object({
-  id: z.string().min(1, '话题ID不能为空'),
+  id: z.string().min(1, 'Topic ID cannot be empty'),
 });
 
 export const TopicDeleteParamSchema = z.object({
-  id: z.string().min(1, '话题ID不能为空'),
+  id: z.string().min(1, 'Topic ID cannot be empty'),
 });
 
 export const TopicUpdateParamSchema = z.object({
-  id: z.string().min(1, '话题ID不能为空'),
+  id: z.string().min(1, 'Topic ID cannot be empty'),
 });

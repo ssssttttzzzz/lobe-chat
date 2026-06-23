@@ -736,32 +736,30 @@ describe('chatMessage actions', () => {
       // 在每个测试用例开始前恢复到实际的 SWR 实现
       vi.resetAllMocks();
     });
-    it('should refresh messages by calling mutate for both session and group types', async () => {
+    it('should refresh messages by invalidating message:list for the active agent+topic', async () => {
       useChatStore.setState({ refreshMessages: realRefreshMessages });
 
       const { result } = renderHook(() => useChatStore());
       const activeAgentId = useChatStore.getState().activeAgentId;
       const activeTopicId = useChatStore.getState().activeTopicId;
 
-      // 在这里，我们不需要再次模拟 mutate，因为它已经在顶部被模拟了
       await act(async () => {
         await result.current.refreshMessages();
       });
 
-      // 确保 mutate 调用了正确的参数（session 和 group 两次）
-      expect(mutate).toHaveBeenCalledWith([
-        'SWR_USE_FETCH_MESSAGES',
-        activeAgentId,
-        activeTopicId,
-        'session',
-      ]);
-      expect(mutate).toHaveBeenCalledWith([
-        'SWR_USE_FETCH_MESSAGES',
-        activeAgentId,
-        activeTopicId,
-        'group',
-      ]);
-      expect(mutate).toHaveBeenCalledTimes(2);
+      // refreshMessages now mutates with a single matcher targeting the
+      // accurate `message:list` key for this agent+topic.
+      expect(mutate).toHaveBeenCalledTimes(1);
+      const matcher = (mutate as any).mock.calls[0][0];
+      expect(typeof matcher).toBe('function');
+      expect(matcher(['message:list', { agentId: activeAgentId, topicId: activeTopicId }, 1])).toBe(
+        true,
+      );
+      // other domains / other topics are not matched
+      expect(matcher(['topic:list', 'container', {}])).toBe(false);
+      expect(matcher(['message:list', { agentId: activeAgentId, topicId: 'other' }, 1])).toBe(
+        false,
+      );
     });
     it('should handle errors during refreshing messages', async () => {
       useChatStore.setState({ refreshMessages: realRefreshMessages });
@@ -778,31 +776,6 @@ describe('chatMessage actions', () => {
 
       // 确保恢复 mutate 的模拟，以免影响其他测试
       (mutate as Mock).mockReset();
-    });
-  });
-
-  describe('internal_toggleMessageLoading', () => {
-    it('should add message id to messageLoadingIds when loading is true', () => {
-      const { result } = renderHook(() => useChatStore());
-      const messageId = 'message-id';
-
-      act(() => {
-        result.current.internal_toggleMessageLoading(true, messageId);
-      });
-
-      expect(result.current.messageLoadingIds).toContain(messageId);
-    });
-
-    it('should remove message id from messageLoadingIds when loading is false', () => {
-      const { result } = renderHook(() => useChatStore());
-      const messageId = 'ddd-id';
-
-      act(() => {
-        result.current.internal_toggleMessageLoading(true, messageId);
-        result.current.internal_toggleMessageLoading(false, messageId);
-      });
-
-      expect(result.current.messageLoadingIds).not.toContain(messageId);
     });
   });
 
@@ -1013,6 +986,71 @@ describe('chatMessage actions', () => {
       expect(replaceMessagesSpy).toHaveBeenCalledWith([], {
         context: { agentId: 'session-id', topicId: 'topic-id', threadId: undefined },
       });
+    });
+
+    it('should sync mirrored tool state into the parent assistant tools array', async () => {
+      const { result } = renderHook(() => useChatStore());
+      const assistantMessage = {
+        id: 'assistant-id',
+        role: 'assistant',
+        content: 'assistant',
+        tools: [
+          {
+            apiName: 'askUserQuestion',
+            arguments: '{}',
+            id: 'tool-call-id',
+            identifier: 'lobe-user-interaction',
+            intervention: { status: 'pending' },
+          },
+        ],
+      } as UIChatMessage;
+      const toolMessage = {
+        id: 'tool-message-id',
+        role: 'tool',
+        content: '',
+        parentId: assistantMessage.id,
+        plugin: {
+          apiName: 'askUserQuestion',
+          arguments: '{}',
+          identifier: 'lobe-user-interaction',
+          intervention: { status: 'pending' },
+        },
+        tool_call_id: 'tool-call-id',
+      } as UIChatMessage;
+      const dispatchSpy = vi.spyOn(result.current, 'internal_dispatchMessage');
+
+      act(() => {
+        useChatStore.setState({
+          messagesMap: {
+            [messageMapKey({ agentId: 'session-id', topicId: 'topic-id' })]: [
+              assistantMessage,
+              toolMessage,
+            ],
+          },
+          dbMessagesMap: {
+            [messageMapKey({ agentId: 'session-id', topicId: 'topic-id' })]: [
+              assistantMessage,
+              toolMessage,
+            ],
+          },
+        });
+      });
+
+      await act(async () => {
+        await result.current.optimisticUpdateMessagePlugin(toolMessage.id, {
+          intervention: { status: 'approved' },
+        });
+      });
+
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        {
+          id: assistantMessage.id,
+          tool_call_id: 'tool-call-id',
+          type: 'updateMessageTools',
+          value: { intervention: { status: 'approved' } },
+        },
+        undefined,
+      );
     });
 
     it('should use context operationId when provided', async () => {

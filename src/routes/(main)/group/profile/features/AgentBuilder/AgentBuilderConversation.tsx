@@ -4,6 +4,7 @@ import { memo } from 'react';
 import AgentBuilderWelcome from '@/features/AgentBuilder/AgentBuilderWelcome';
 import { type ActionKeys } from '@/features/ChatInput';
 import { ChatInput, ChatList } from '@/features/Conversation';
+import { usePermission } from '@/hooks/usePermission';
 
 import TopicSelector from './TopicSelector';
 
@@ -11,19 +12,22 @@ interface AgentBuilderConversationProps {
   agentId: string;
 }
 const actions: ActionKeys[] = ['model'];
+const rightActions: ActionKeys[] = [];
 
 /**
  * Agent Builder Conversation Component
  * Displays the chat interface for configuring the agent via conversation
  */
 const AgentBuilderConversation = memo<AgentBuilderConversationProps>(({ agentId }) => {
+  const { allowed: canCreate } = usePermission('create_content');
+
   return (
     <Flexbox flex={1} height={'100%'}>
-      <TopicSelector agentId={agentId} />
+      <TopicSelector agentId={agentId} disabled={!canCreate} />
       <Flexbox flex={1} style={{ overflow: 'hidden' }}>
-        <ChatList welcome={<AgentBuilderWelcome mode="group" />} />
+        <ChatList welcome={<AgentBuilderWelcome disabled={!canCreate} mode="group" />} />
       </Flexbox>
-      <ChatInput leftActions={actions} showRuntimeConfig={false} />
+      <ChatInput leftActions={actions} rightActions={rightActions} showControlBar={false} />
     </Flexbox>
   );
 });

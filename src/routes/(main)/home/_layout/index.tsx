@@ -1,11 +1,10 @@
 import { Flexbox } from '@lobehub/ui';
 import { useTheme } from 'antd-style';
-import { type FC, type ReactNode } from 'react';
-import { Activity, useEffect, useMemo, useState } from 'react';
-import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Activity, type FC, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { Outlet, useLocation } from 'react-router';
 
+import { useActiveWorkspaceSlug } from '@/business/client/hooks/useActiveWorkspaceSlug';
 import { useIsDark } from '@/hooks/useIsDark';
-import { useHomeStore } from '@/store/home';
 
 import HomeAgentIdSync from './HomeAgentIdSync';
 import RecentHydration from './RecentHydration';
@@ -19,22 +18,19 @@ interface LayoutProps {
 const Layout: FC<LayoutProps> = ({ children }) => {
   const isDarkMode = useIsDark();
   const theme = useTheme(); // Keep for colorBgContainerSecondary (not in cssVar)
-  const navigate = useNavigate();
   const { pathname } = useLocation();
-  const isHomeRoute = pathname === '/';
+  const activeSlug = useActiveWorkspaceSlug();
+  const isHomeRoute =
+    pathname === '/' ||
+    (!!activeSlug && (pathname === `/${activeSlug}` || pathname === `/${activeSlug}/`));
   const [hasActivated, setHasActivated] = useState(isHomeRoute);
-  const setNavigate = useHomeStore((s) => s.setNavigate);
   const content = children ?? <Outlet />;
-
-  useEffect(() => {
-    setNavigate(navigate);
-  }, [navigate, setNavigate]);
 
   useEffect(() => {
     if (isHomeRoute) setHasActivated(true);
   }, [isHomeRoute]);
 
-  // CSS 变量用于动态背景色（colorBgContainerSecondary 不在 cssVar 中）
+  // CSS variable for dynamic background color (colorBgContainerSecondary is not in cssVar)
   const cssVariables = useMemo<Record<string, string>>(
     () => ({
       '--content-bg-secondary': theme.colorBgContainerSecondary,
@@ -47,7 +43,14 @@ const Layout: FC<LayoutProps> = ({ children }) => {
   // Keep the Home layout alive and render it offscreen when inactive.
   return (
     <Activity mode={isHomeRoute ? 'visible' : 'hidden'} name="DesktopHomeLayout">
-      <Flexbox className={styles.absoluteContainer} height={'100%'} width={'100%'}>
+      {/* `position: absolute; inset: 0` keeps overlaying the outlet when Activity is hidden,
+        because Activity preserves state but doesn't visually hide the DOM. Force-hide here. */}
+      <Flexbox
+        className={styles.absoluteContainer}
+        height={'100%'}
+        style={isHomeRoute ? undefined : { display: 'none' }}
+        width={'100%'}
+      >
         <Sidebar />
         <Flexbox
           className={isDarkMode ? styles.contentDark : styles.contentLight}

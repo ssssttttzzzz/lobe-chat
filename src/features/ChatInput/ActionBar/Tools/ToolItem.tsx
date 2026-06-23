@@ -2,20 +2,16 @@ import { Flexbox, Text } from '@lobehub/ui';
 import { memo, Suspense } from 'react';
 
 import DebugNode from '@/components/DebugNode';
-import PluginTag from '@/components/Plugins/PluginTag';
-import { useToolStore } from '@/store/tool';
-import { customPluginSelectors } from '@/store/tool/selectors';
 
 import type { CheckboxItemProps } from '../components/CheckboxWithLoading';
 import CheckboxItem from '../components/CheckboxWithLoading';
 
-const ToolItem = memo<CheckboxItemProps>(({ id, onUpdate, label, checked }) => {
-  const isCustom = useToolStore((s) => customPluginSelectors.isCustomPlugin(id)(s));
-
+const ToolItem = memo<CheckboxItemProps>(({ id, onUpdate, label, checked, disabled }) => {
   return (
     <Suspense fallback={<DebugNode trace="ActionBar/Tools/ToolItem" />}>
       <CheckboxItem
         checked={checked}
+        disabled={disabled}
         hasPadding={false}
         id={id}
         label={
@@ -28,7 +24,6 @@ const ToolItem = memo<CheckboxItemProps>(({ id, onUpdate, label, checked }) => {
             >
               {label || id}
             </Text>
-            {isCustom && <PluginTag showText={false} type={'customPlugin'} />}
           </Flexbox>
         }
         onUpdate={onUpdate}

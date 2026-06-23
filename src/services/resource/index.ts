@@ -1,4 +1,6 @@
-import { type FileListItem } from '@/types/files';
+import { CUSTOM_DOCUMENT_FILE_TYPE, DERIVED_DOCUMENT_SOURCE_TYPE } from '@lobechat/const';
+
+import { type FileListItem, type KnowledgeItemStatus } from '@/types/files';
 import {
   type CreateResourceParams,
   type ResourceItem,
@@ -58,6 +60,29 @@ const mapToResourceItem = (item: FileListItem): ResourceItem => {
   };
 };
 
+type ResourceStatusItem = Pick<
+  ResourceItem,
+  | 'chunkCount'
+  | 'chunkingError'
+  | 'chunkingStatus'
+  | 'embeddingError'
+  | 'embeddingStatus'
+  | 'finishEmbedding'
+  | 'id'
+>;
+
+const mapStatusToResourceItem = (item: KnowledgeItemStatus): ResourceStatusItem => {
+  return {
+    chunkCount: item.chunkCount,
+    chunkingError: item.chunkingError,
+    chunkingStatus: item.chunkingStatus,
+    embeddingError: item.embeddingError,
+    embeddingStatus: item.embeddingStatus,
+    finishEmbedding: item.finishEmbedding,
+    id: item.id,
+  };
+};
+
 /**
  * ResourceService - Unified service for both files and documents
  * Provides a thin wrapper over FileService and DocumentService
@@ -89,12 +114,43 @@ export class ResourceService {
     };
   }
 
+  async resolveSelectionIds(
+    params: ResourceQueryParams,
+  ): Promise<{ ids: string[]; total: number }> {
+    const backendParams = {
+      ...params,
+      knowledgeBaseId: params.libraryId,
+      libraryId: undefined,
+    };
+
+    return fileService.resolveKnowledgeItemIds(backendParams);
+  }
+
+  async deleteResourcesByQuery(params: ResourceQueryParams): Promise<{ count: number }> {
+    const backendParams = {
+      ...params,
+      knowledgeBaseId: params.libraryId,
+      libraryId: undefined,
+    };
+
+    return fileService.deleteKnowledgeItemsByQuery(backendParams);
+  }
+
   /**
    * Get a single resource by ID
    */
   async getResource(id: string): Promise<ResourceItem | undefined> {
     const item = await fileService.getKnowledgeItem(id);
     return item ? mapToResourceItem(item) : undefined;
+  }
+
+  async getKnowledgeItemStatusesByIds(ids: string[]): Promise<ResourceStatusItem[]> {
+    const items = await fileService.getKnowledgeItemStatusesByIds(ids);
+    return items.map(mapStatusToResourceItem);
+  }
+
+  async getResourceStatusesByIds(ids: string[]): Promise<ResourceStatusItem[]> {
+    return this.getKnowledgeItemStatusesByIds(ids);
   }
 
   /**
@@ -142,14 +198,14 @@ export class ResourceService {
           typeof created.editorData === 'string'
             ? JSON.parse(created.editorData)
             : created.editorData,
-        fileType: created.fileType || 'custom/document',
+        fileType: created.fileType || CUSTOM_DOCUMENT_FILE_TYPE,
         id: created.id,
         metadata: created.metadata || undefined,
         name: created.title || 'Untitled',
         parentId: created.parentId,
         size: created.totalCharCount || 0,
         slug: created.slug || undefined,
-        sourceType: 'document',
+        sourceType: DERIVED_DOCUMENT_SOURCE_TYPE,
         title: created.title || undefined,
         updatedAt: created.updatedAt ? new Date(created.updatedAt) : new Date(),
         url: created.source || '',
@@ -166,34 +222,26 @@ export class ResourceService {
     if (!existing) throw new Error('Resource not found');
 
     if (existing.sourceType === 'file') {
-      // Update file (currently only supports parentId)
-      if (updates.parentId !== undefined) {
-        await fileService.updateFile(id, { parentId: updates.parentId });
-      }
-
-      // Fetch updated file
-      const updated = await fileService.getKnowledgeItem(id);
-      if (!updated) throw new Error('Failed to fetch updated file');
-
-      return mapToResourceItem(updated);
+      await fileService.updateFile(id, {
+        metadata: updates.metadata,
+        name: updates.name ?? updates.title,
+        parentId: updates.parentId !== undefined ? updates.parentId : undefined,
+      });
     } else {
-      // Update document
       await documentService.updateDocument({
         content: updates.content,
         editorData: updates.editorData ? JSON.stringify(updates.editorData) : undefined,
         id,
         metadata: updates.metadata,
-        // Keep null as null (for moving to root), don't convert to undefined
         parentId: updates.parentId !== undefined ? updates.parentId : undefined,
         title: updates.title || updates.name,
       });
-
-      // Fetch updated document
-      const updated = await fileService.getKnowledgeItem(id);
-      if (!updated) throw new Error('Failed to fetch updated document');
-
-      return mapToResourceItem(updated);
     }
+
+    const updated = await fileService.getKnowledgeItem(id);
+    if (!updated) throw new Error('Failed to fetch updated resource');
+
+    return mapToResourceItem(updated);
   }
 
   /**

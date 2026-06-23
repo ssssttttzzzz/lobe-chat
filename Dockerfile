@@ -89,7 +89,7 @@ RUN set -e && \
     pnpm i && \
     mkdir -p /deps && \
     cd /deps && \
-    pnpm init && \
+    echo '{"name":"deps","private":true}' > package.json && \
     pnpm add pg drizzle-orm
 
 COPY . .
@@ -111,7 +111,7 @@ COPY --from=base /distroless/ /
 COPY --from=builder /app/.next/standalone /app/
 COPY --from=builder /app/.next/static /app/.next/static
 # Copy SPA assets (Vite build output)
-COPY --from=builder /app/public/spa /app/public/spa
+COPY --from=builder /app/public/_spa /app/public/_spa
 # Copy database migrations
 COPY --from=builder /app/packages/database/migrations /app/migrations
 COPY --from=builder /app/scripts/migrateServerDB/docker.cjs /app/docker.cjs
@@ -210,6 +210,14 @@ ENV NEXT_PUBLIC_S3_DOMAIN="" \
     S3_ENABLE_PATH_STYLE="" \
     S3_SET_ACL=""
 
+# Cloud Sandbox
+ENV SANDBOX_PROVIDER="" \
+    ONLYBOXES_BASE_URL="" \
+    ONLYBOXES_JIT_ISSUER="" \
+    ONLYBOXES_JIT_SIGNING_KEY="" \
+    ONLYBOXES_JIT_TTL_SEC="" \
+    ONLYBOXES_LEASE_TTL_SEC=""
+
 # Model Variables
 ENV \
     # AI21
@@ -219,7 +227,7 @@ ENV \
     # AiHubMix
     AIHUBMIX_API_KEY="" AIHUBMIX_MODEL_LIST="" \
     # Anthropic
-    ANTHROPIC_API_KEY="" ANTHROPIC_MODEL_LIST="" ANTHROPIC_PROXY_URL="" \
+    ANTHROPIC_API_KEY="" ANTHROPIC_CLIENT_TIMEOUT="" ANTHROPIC_MODEL_LIST="" ANTHROPIC_PROXY_URL="" \
     # Amazon Bedrock
     ENABLED_AWS_BEDROCK="" AWS_ACCESS_KEY_ID="" AWS_SECRET_ACCESS_KEY="" AWS_REGION="" AWS_BEDROCK_MODEL_LIST="" \
     # Azure OpenAI

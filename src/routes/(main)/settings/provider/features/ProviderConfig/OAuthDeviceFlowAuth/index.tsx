@@ -3,26 +3,28 @@
 import { CheckCircleFilled } from '@ant-design/icons';
 import { ProviderIcon } from '@lobehub/icons';
 import { CopyButton, Flexbox, Icon } from '@lobehub/ui';
-import { App, Avatar, Button, Typography } from 'antd';
-import { createStyles, cssVar } from 'antd-style';
+import { confirmModal } from '@lobehub/ui/base-ui';
+import { Avatar, Button, Typography } from 'antd';
+import { createStaticStyles, cssVar } from 'antd-style';
 import { ExternalLinkIcon, Loader2Icon, LogOutIcon, UnplugIcon } from 'lucide-react';
 import { type ReactNode } from 'react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { usePermission } from '@/hooks/usePermission';
 import { lambdaQuery } from '@/libs/trpc/client';
 
 import { useOAuthDeviceFlow } from './useOAuthDeviceFlow';
 
 const { Text, Link } = Typography;
 
-const useStyles = createStyles(({ css, token }) => ({
+const styles = createStaticStyles(({ css, cssVar }) => ({
   card: css`
     overflow: hidden;
 
     width: 100%;
     margin-block-end: 24px;
-    border: 1px solid ${token.colorBorderSecondary};
+    border: 1px solid ${cssVar.colorBorderSecondary};
     border-radius: 12px;
   `,
   codeBox: css`
@@ -40,7 +42,7 @@ const useStyles = createStyles(({ css, token }) => ({
     font-weight: 600;
     letter-spacing: 6px;
 
-    background: ${token.colorFillTertiary};
+    background: ${cssVar.colorFillTertiary};
   `,
   content: css`
     display: flex;
@@ -52,7 +54,7 @@ const useStyles = createStyles(({ css, token }) => ({
     padding-inline: 48px;
   `,
   errorText: css`
-    color: ${token.colorError};
+    color: ${cssVar.colorError};
   `,
   header: css`
     display: flex;
@@ -61,7 +63,7 @@ const useStyles = createStyles(({ css, token }) => ({
 
     padding-block: 16px;
     padding-inline: 24px;
-    border-block-end: 1px solid ${token.colorBorderSecondary};
+    border-block-end: 1px solid ${cssVar.colorBorderSecondary};
   `,
   hero: css`
     display: flex;
@@ -85,13 +87,13 @@ const useStyles = createStyles(({ css, token }) => ({
     border-radius: 8px;
 
     font-size: 13px;
-    color: ${token.colorTextSecondary};
+    color: ${cssVar.colorTextSecondary};
 
-    background: ${token.colorFillQuaternary};
+    background: ${cssVar.colorFillQuaternary};
   `,
   serviceNote: css`
     font-size: 13px;
-    color: ${token.colorTextDescription};
+    color: ${cssVar.colorTextDescription};
     text-align: center;
   `,
   successBadge: css`
@@ -100,11 +102,11 @@ const useStyles = createStyles(({ css, token }) => ({
     align-items: center;
 
     font-size: 13px;
-    color: ${token.colorSuccess};
+    color: ${cssVar.colorSuccess};
   `,
   userAvatar: css`
-    border: 2px solid ${token.colorBorderSecondary};
-    box-shadow: 0 4px 12px ${token.colorFillSecondary};
+    border: 2px solid ${cssVar.colorBorderSecondary};
+    box-shadow: 0 4px 12px ${cssVar.colorFillSecondary};
   `,
   userInfo: css`
     display: flex;
@@ -115,7 +117,7 @@ const useStyles = createStyles(({ css, token }) => ({
   username: css`
     font-size: 16px;
     font-weight: 600;
-    color: ${token.colorText};
+    color: ${cssVar.colorText};
   `,
 }));
 
@@ -130,9 +132,7 @@ export interface OAuthDeviceFlowAuthProps {
 const OAuthDeviceFlowAuth = memo<OAuthDeviceFlowAuthProps>(
   ({ providerId, name, onAuthChange, title, extra }) => {
     const { t } = useTranslation('modelProvider');
-    const { modal } = App.useApp();
-    const { styles } = useStyles();
-
+    const { allowed: canManageProvider } = usePermission('manage_provider_key');
     const [isAuthenticating, setIsAuthenticating] = useState(false);
     const hasAutoClosedRef = useRef(false);
 
@@ -142,7 +142,7 @@ const OAuthDeviceFlowAuth = memo<OAuthDeviceFlowAuthProps>(
       { providerId },
       { refetchOnWindowFocus: true },
     );
-    const isAuthenticated = authStatus?.isAuthenticated ?? false;
+    const isAuthenticated = authStatus?.status === 'ACTIVE';
     const username = authStatus?.username;
     const avatarUrl = authStatus?.avatarUrl;
 
@@ -167,8 +167,9 @@ const OAuthDeviceFlowAuth = memo<OAuthDeviceFlowAuthProps>(
     });
 
     const handleDisconnect = useCallback(() => {
-      modal.confirm({
-        centered: true,
+      if (!canManageProvider) return;
+
+      confirmModal({
         content: t('providerModels.config.oauth.disconnectConfirm'),
         okButtonProps: { danger: true },
         okText: t('providerModels.config.oauth.disconnect'),
@@ -177,13 +178,15 @@ const OAuthDeviceFlowAuth = memo<OAuthDeviceFlowAuthProps>(
         },
         title: t('providerModels.config.oauth.disconnect'),
       });
-    }, [modal, providerId, revokeAuth, t]);
+    }, [canManageProvider, providerId, revokeAuth, t]);
 
     const handleStartAuth = useCallback(async () => {
+      if (!canManageProvider) return;
+
       hasAutoClosedRef.current = false;
       setIsAuthenticating(true);
       await startAuth();
-    }, [startAuth]);
+    }, [canManageProvider, startAuth]);
 
     const handleCancelAuth = useCallback(() => {
       setIsAuthenticating(false);
@@ -228,6 +231,7 @@ const OAuthDeviceFlowAuth = memo<OAuthDeviceFlowAuthProps>(
               </div>
             </Flexbox>
             <Button
+              disabled={!canManageProvider}
               icon={<Icon icon={LogOutIcon} />}
               loading={revokeAuth.isPending}
               onClick={handleDisconnect}
@@ -263,7 +267,12 @@ const OAuthDeviceFlowAuth = memo<OAuthDeviceFlowAuthProps>(
                 <Text className={styles.errorText}>{t(errorKey as any)}</Text>
               </Flexbox>
               <Flexbox gap={12} style={{ width: '100%' }} width={280}>
-                <Button block type="primary" onClick={handleStartAuth}>
+                <Button
+                  block
+                  disabled={!canManageProvider}
+                  type="primary"
+                  onClick={handleStartAuth}
+                >
                   {t('providerModels.config.oauth.retry')}
                 </Button>
                 <Button block type="text" onClick={handleCancelAuth}>
@@ -327,7 +336,12 @@ const OAuthDeviceFlowAuth = memo<OAuthDeviceFlowAuthProps>(
               <Icon color={cssVar.colorError} icon={UnplugIcon} size={18} />
               <Text className={styles.errorText}>{t(errorKey as any)}</Text>
             </Flexbox>
-            <Button size="large" type="primary" onClick={handleStartAuth}>
+            <Button
+              disabled={!canManageProvider}
+              size="large"
+              type="primary"
+              onClick={handleStartAuth}
+            >
               {t('providerModels.config.oauth.connect', { name })}
             </Button>
             <div className={styles.serviceNote}>
@@ -340,7 +354,12 @@ const OAuthDeviceFlowAuth = memo<OAuthDeviceFlowAuthProps>(
       // Default state - show connect button
       return (
         <div className={styles.content}>
-          <Button size="large" type="primary" onClick={handleStartAuth}>
+          <Button
+            disabled={!canManageProvider}
+            size="large"
+            type="primary"
+            onClick={handleStartAuth}
+          >
             {t('providerModels.config.oauth.connect', { name })}
           </Button>
           <div className={styles.serviceNote}>

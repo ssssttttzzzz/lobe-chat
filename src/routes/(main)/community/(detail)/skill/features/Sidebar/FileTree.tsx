@@ -8,7 +8,7 @@ import { ChevronDown } from 'lucide-react';
 import qs from 'query-string';
 import { type Key, memo, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 
 import Title from '../../../../components/Title';
 import { useDetailContext } from '../DetailProvider';
@@ -103,7 +103,7 @@ const FileTree = memo(() => {
     const root = createNode('root', '/');
     const entries = Object.entries((resources || {}) as Record<string, unknown>);
 
-    // 至少包含主文件，避免出现空树
+    // Include at least the main file to avoid an empty tree
     if (!entries.some(([path]) => path.toLowerCase() === 'skill.md')) {
       entries.push(['SKILL.md', {}]);
     }

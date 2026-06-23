@@ -1,29 +1,44 @@
-import { isChatGroupSessionId } from '@lobechat/types';
+import { isDesktop } from '@lobechat/const';
+import { type AgentContextDocument } from '@lobechat/context-engine';
+import { isChatGroupSessionId, pruneWorkingDirByDeviceDeletes } from '@lobechat/types';
 import { getSingletonAnalyticsOptional } from '@lobehub/analytics';
 import isEqual from 'fast-deep-equal';
 import { produce } from 'immer';
-import { type SWRResponse } from 'swr';
-import { type PartialDeep } from 'type-fest';
+import type { SWRResponse } from 'swr';
+import type { PartialDeep } from 'type-fest';
 
 import { MESSAGE_CANCEL_FLAT } from '@/const/message';
-import { mutate, useClientDataSWR } from '@/libs/swr';
-import { type CreateAgentParams, type CreateAgentResult } from '@/services/agent';
-import { agentService } from '@/services/agent';
-import { type StoreSetter } from '@/store/types';
+import { mutate, useClientDataSWRWithSync } from '@/libs/swr';
+import { agentConfigKeys } from '@/libs/swr/keys';
+import type { AvailableAgentItem, CreateAgentParams, CreateAgentResult } from '@/services/agent';
+import { agentService, AVAILABLE_AGENTS_CONTEXT_QUERY_LIMIT } from '@/services/agent';
+import {
+  type AgentDocumentListItem,
+  agentDocumentService,
+  agentDocumentSWRKeys,
+  resolveAgentDocumentsContext,
+} from '@/services/agentDocument';
+import type { StoreSetter } from '@/store/types';
 import { getUserStoreState } from '@/store/user';
 import { userProfileSelectors } from '@/store/user/selectors';
-import {
-  type LobeAgentChatConfig,
-  type LobeAgentConfig,
-  type RuntimeEnvConfig,
+import type {
+  AgentItem,
+  LobeAgentChatConfig,
+  LobeAgentConfig,
+  RuntimeEnvConfig,
 } from '@/types/agent';
-import { type MetaData } from '@/types/meta';
 import { merge } from '@/utils/merge';
 
-import { type AgentStore } from '../../store';
-import { type AgentSliceState, type LoadingState, type SaveStatus } from './initialState';
+import type { AgentStore } from '../../store';
+import { setLocalAgentWorkingDirectory } from '../../utils/localAgentWorkingDirectoryStorage';
+import type { AgentSliceState, LoadingState, SaveStatus } from './initialState';
 
-const FETCH_AGENT_CONFIG_KEY = 'FETCH_AGENT_CONFIG';
+type AgentMetaUpdate = Partial<
+  Pick<
+    AgentItem,
+    'avatar' | 'backgroundColor' | 'description' | 'marketIdentifier' | 'tags' | 'title'
+  >
+>;
 
 /**
  * Agent Slice Actions
@@ -37,12 +52,26 @@ export const createAgentSlice = (set: Setter, get: () => AgentStore, _api?: unkn
 export class AgentSliceActionImpl {
   readonly #get: () => AgentStore;
   readonly #set: Setter;
+  readonly #pendingAgentDocuments = new Map<string, Promise<AgentContextDocument[] | undefined>>();
 
   constructor(set: Setter, get: () => AgentStore, _api?: unknown) {
     void _api;
     this.#set = set;
     this.#get = get;
   }
+
+  #syncAgentDocuments = (agentId: string, documents: AgentContextDocument[]) => {
+    this.#set(
+      (state) => ({
+        agentDocumentsMap: {
+          ...state.agentDocumentsMap,
+          [agentId]: documents,
+        },
+      }),
+      false,
+      'syncAgentDocuments',
+    );
+  };
 
   appendStreamingSystemRole = (chunk: string): void => {
     const currentContent = this.#get().streamingSystemRole || '';
@@ -51,6 +80,7 @@ export class AgentSliceActionImpl {
 
   createAgent = async (params: CreateAgentParams): Promise<CreateAgentResult> => {
     const result = await agentService.createAgent(params);
+    this.#get().invalidateAvailableAgents();
 
     // Track new agent creation analytics
     const analytics = getSingletonAnalyticsOptional();
@@ -64,7 +94,6 @@ export class AgentSliceActionImpl {
           agent_id: result.agentId,
           assistant_name: params.config?.title || 'Untitled Agent',
           assistant_tags: params.config?.tags || [],
-          session_id: result.sessionId,
           user_id: userId || 'anonymous',
         },
       });
@@ -128,6 +157,13 @@ export class AgentSliceActionImpl {
 
   toggleAgentPinned = (): void => {
     this.#set((state) => ({ isAgentPinned: !state.isAgentPinned }), false, 'toggleAgentPinned');
+  };
+
+  transferAgent = async (
+    agentId: string,
+    targetWorkspaceId: string | null,
+  ): Promise<{ agentId: string; slug: string | null }> => {
+    return agentService.transferAgent(agentId, targetWorkspaceId);
   };
 
   toggleAgentPlugin = async (pluginId: string, state?: boolean): Promise<void> => {
@@ -197,10 +233,25 @@ export class AgentSliceActionImpl {
   ): Promise<void> => {
     if (!agentId) return;
 
-    await this.#get().updateAgentChatConfigById(agentId, { runtimeEnv: config });
+    if (isDesktop && 'workingDirectory' in config) {
+      setLocalAgentWorkingDirectory(agentId, config.workingDirectory);
+      const nextMap = { ...this.#get().localAgentWorkingDirectoryMap };
+      if (config.workingDirectory) {
+        nextMap[agentId] = config.workingDirectory;
+      } else {
+        delete nextMap[agentId];
+      }
+      this.#set({ localAgentWorkingDirectoryMap: nextMap }, false, 'updateAgentWorkingDirectory');
+    }
+
+    const restConfig = { ...config };
+    delete restConfig.workingDirectory;
+    if (Object.keys(restConfig).length > 0) {
+      await this.#get().updateAgentChatConfigById(agentId, { runtimeEnv: restConfig });
+    }
   };
 
-  updateAgentMeta = async (meta: Partial<MetaData>): Promise<void> => {
+  updateAgentMeta = async (meta: AgentMetaUpdate): Promise<void> => {
     const { activeAgentId } = this.#get();
 
     if (!activeAgentId) return;
@@ -233,23 +284,159 @@ export class AgentSliceActionImpl {
     isLogin: boolean | undefined,
     agentId: string,
   ): SWRResponse<LobeAgentConfig> => {
-    return useClientDataSWR<LobeAgentConfig>(
-      // Only fetch when login status is explicitly true (not null/undefined)
+    const swrKey =
       isLogin === true && agentId && !isChatGroupSessionId(agentId)
-        ? ([FETCH_AGENT_CONFIG_KEY, agentId] as const)
-        : null,
-      async ([, id]: readonly [string, string]) => {
-        const data = await agentService.getAgentConfigById(id);
+        ? agentConfigKeys.config(agentId)
+        : null;
+
+    return useClientDataSWRWithSync<LobeAgentConfig>(
+      swrKey,
+      async () => {
+        const data = await agentService.getAgentConfigById(agentId);
         return data as LobeAgentConfig;
       },
       {
-        onSuccess: (data) => {
+        onData: (data) => {
+          if (!data) return;
           this.#get().internal_dispatchAgentMap(agentId, data);
-
-          this.#set({ activeAgentId: data.id }, false, 'fetchAgentConfig');
+          // Only adopt the fetched agent as the active one when nothing is
+          // active yet. The active agent is owned by the route-level sync
+          // (AgentIdSync on desktop/mobile, the popup pages' own setState).
+          // A background or secondary config fetch — e.g. the inbox config
+          // requested by the home input, a side-panel copilot, or another
+          // open tab — must NOT hijack `activeAgentId` away from the routed
+          // agent, which would otherwise flash the conversation header/welcome
+          // back to the inbox ("Lobe AI") agent.
+          if (!this.#get().activeAgentId) {
+            this.#set({ activeAgentId: data.id }, false, 'fetchAgentConfig');
+          }
+          this.#clearAgentConfigError(agentId);
+        },
+        onError: (error) => {
+          this.#set(
+            (state) => ({
+              agentConfigErrorMap: {
+                ...state.agentConfigErrorMap,
+                [agentId]: error?.message || String(error),
+              },
+            }),
+            false,
+            'fetchAgentConfig/error',
+          );
         },
       },
     );
+  };
+
+  /**
+   * Re-trigger the agent config fetch after a failure. Clears the recorded
+   * error first so consumers fall back to the loading skeleton, then
+   * revalidates every SWR entry for this agent (keys may carry a workspace
+   * suffix, hence the filter form).
+   */
+  retryAgentConfigFetch = async (agentId?: string): Promise<void> => {
+    const id = agentId ?? this.#get().activeAgentId;
+    if (!id) return;
+
+    this.#clearAgentConfigError(id);
+
+    await mutate(
+      (key) => Array.isArray(key) && key[0] === agentConfigKeys.config.root && key[1] === id,
+    );
+  };
+
+  #clearAgentConfigError = (agentId: string) => {
+    if (!this.#get().agentConfigErrorMap[agentId]) return;
+
+    this.#set(
+      (state) => {
+        const next = { ...state.agentConfigErrorMap };
+        delete next[agentId];
+        return { agentConfigErrorMap: next };
+      },
+      false,
+      'clearAgentConfigError',
+    );
+  };
+
+  useHydrateAgentConfig = (
+    isLogin: boolean | undefined,
+    agentId: string,
+  ): SWRResponse<LobeAgentConfig> => {
+    const swrKey =
+      isLogin === true && agentId && !isChatGroupSessionId(agentId)
+        ? agentConfigKeys.config(agentId)
+        : null;
+
+    return useClientDataSWRWithSync<LobeAgentConfig>(
+      swrKey,
+      async () => {
+        const data = await agentService.getAgentConfigById(agentId);
+        return data as LobeAgentConfig;
+      },
+      {
+        onData: (data) => {
+          if (!data) return;
+          this.#get().internal_dispatchAgentMap(agentId, data);
+        },
+      },
+    );
+  };
+
+  useFetchAgentDocuments = (agentId?: string | null): SWRResponse<AgentDocumentListItem[]> => {
+    return useClientDataSWRWithSync<AgentDocumentListItem[]>(
+      agentId ? agentDocumentSWRKeys.documentsList(agentId) : null,
+      async () => agentDocumentService.listDocuments({ agentId: agentId! }),
+      {
+        revalidateOnFocus: false,
+      },
+    );
+  };
+
+  useFetchAvailableAgents = (enabled: boolean): SWRResponse<AvailableAgentItem[]> => {
+    return useClientDataSWRWithSync<AvailableAgentItem[]>(
+      enabled ? agentConfigKeys.available() : null,
+      () => agentService.queryAgents({ limit: AVAILABLE_AGENTS_CONTEXT_QUERY_LIMIT }),
+      {
+        onData: (data) => {
+          this.#set({ availableAgents: data }, false, 'useFetchAvailableAgents');
+        },
+        revalidateOnFocus: false,
+      },
+    );
+  };
+
+  invalidateAvailableAgents = (): void => {
+    this.#set({ availableAgents: undefined }, false, 'invalidateAvailableAgents');
+    void mutate(agentConfigKeys.available());
+  };
+
+  ensureAgentDocuments = async (
+    agentId?: string | null,
+  ): Promise<AgentContextDocument[] | undefined> => {
+    if (!agentId) return undefined;
+
+    const cachedDocuments = this.#get().agentDocumentsMap[agentId];
+    if (cachedDocuments !== undefined) return cachedDocuments;
+
+    const pendingRequest = this.#pendingAgentDocuments.get(agentId);
+    if (pendingRequest) return pendingRequest;
+
+    const request = resolveAgentDocumentsContext({ agentId })
+      .then((documents) => {
+        if (documents) {
+          this.#syncAgentDocuments(agentId, documents);
+        }
+
+        return documents;
+      })
+      .finally(() => {
+        this.#pendingAgentDocuments.delete(agentId);
+      });
+
+    this.#pendingAgentDocuments.set(agentId, request);
+
+    return request;
   };
 
   internal_dispatchAgentMap = (id: string, config: PartialDeep<LobeAgentConfig>): void => {
@@ -258,6 +445,9 @@ export class AgentSliceActionImpl {
         draft[id] = config;
       } else {
         draft[id] = merge(draft[id], config);
+        // merge() can't drop keys; honor `undefined` as a per-device delete so
+        // clearing a working directory takes effect optimistically.
+        pruneWorkingDirByDeviceDeletes(draft[id].agencyConfig, config.agencyConfig);
       }
     });
 
@@ -284,6 +474,7 @@ export class AgentSliceActionImpl {
       // 3. Use returned data directly (no refetch needed!)
       if (result?.success && result.agent) {
         internal_dispatchAgentMap(id, result.agent);
+        this.#get().invalidateAvailableAgents();
       }
       updateSaveStatus('saved');
     } catch (error: any) {
@@ -298,7 +489,7 @@ export class AgentSliceActionImpl {
 
   optimisticUpdateAgentMeta = async (
     id: string,
-    meta: Partial<MetaData>,
+    meta: AgentMetaUpdate,
     signal?: AbortSignal,
   ): Promise<void> => {
     const { internal_dispatchAgentMap, updateSaveStatus } = this.#get();
@@ -314,6 +505,7 @@ export class AgentSliceActionImpl {
       // 3. Use returned data directly (no refetch needed!)
       if (result?.success && result.agent) {
         internal_dispatchAgentMap(id, result.agent);
+        this.#get().invalidateAvailableAgents();
       }
       updateSaveStatus('saved');
     } catch (error: any) {
@@ -327,7 +519,7 @@ export class AgentSliceActionImpl {
   };
 
   internal_refreshAgentConfig = async (id: string): Promise<void> => {
-    await mutate([FETCH_AGENT_CONFIG_KEY, id]);
+    await mutate(agentConfigKeys.config(id));
   };
 
   internal_createAbortController = (key: keyof AgentSliceState): AbortController => {

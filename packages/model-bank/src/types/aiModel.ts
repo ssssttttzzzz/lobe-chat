@@ -16,7 +16,7 @@ export const AiModelTypeSchema = z.enum([
   'chat',
   'embedding',
   'tts',
-  'stt',
+  'asr',
   'image',
   'video',
   'text2music',
@@ -25,7 +25,20 @@ export const AiModelTypeSchema = z.enum([
 
 export type AiModelType = z.infer<typeof AiModelTypeSchema>;
 
+/**
+ * The speech-to-text model type was renamed from the legacy `stt` to the
+ * standard `asr`. Instead of a bulk DB data migration, persisted rows and
+ * external API inputs are normalized at the read/write boundary — only data
+ * that is actually touched gets converted, old untouched rows stay valid.
+ */
+export const normalizeAiModelType = <T extends string | null | undefined>(type: T): T =>
+  (type === 'stt' ? 'asr' : type) as T;
+
 export interface ModelAbilities {
+  /**
+   * whether model supports audio input understanding
+   */
+  audio?: boolean;
   /**
    * whether model supports file upload
    */
@@ -61,6 +74,7 @@ export interface ModelAbilities {
 }
 
 const AiModelAbilitiesSchema = z.object({
+  audio: z.boolean().optional(),
   // files: z.boolean().optional(),
   functionCall: z.boolean().optional(),
   imageOutput: z.boolean().optional(),
@@ -147,12 +161,14 @@ export type PricingUnitName =
   | 'imageOutput'
 
   // Video-based pricing units
+  | 'videoInput'
   | 'videoGeneration';
 
 export type PricingUnitType =
   | 'millionTokens' // per 1M tokens
   | 'millionCharacters' // per 1M characters
   | 'image' // per image
+  | 'video' // per video
   | 'megapixel' // per megapixel
   | 'second'; // per second
 
@@ -165,6 +181,10 @@ export interface PricingUnitBase {
 }
 
 export interface FixedPricingUnit extends PricingUnitBase {
+  /**
+   * Original display price before discounts. Billing and cost calculation use `rate`.
+   */
+  originalRate?: number;
   rate: number;
   strategy: 'fixed';
 }
@@ -211,7 +231,23 @@ export interface AIBaseModelCard {
    */
   displayName?: string;
   enabled?: boolean;
+  /**
+   * product-line lineage, finer than `organization` (e.g. 'claude-opus',
+   * 'claude-mythos', 'gpt', 'o-series', 'qwen'). Families contain generations;
+   * lets the UI group models and match the same model across aggregator providers.
+   */
+  family?: string;
+  /**
+   * model generation within the family (e.g. 'claude-4.6', 'gpt-5.2', 'qwen3.5').
+   * Only set when confidently derivable from the model line's naming.
+   */
+  generation?: string;
   id: string;
+  /**
+   * knowledge cutoff date (YYYY-MM). When the provider distinguishes a "reliable
+   * knowledge cutoff" from the broader training-data cutoff, use the reliable one.
+   */
+  knowledgeCutoff?: string;
   /**
    * whether model is legacy (deprecated but not removed yet)
    */
@@ -223,7 +259,14 @@ export interface AIBaseModelCard {
   organization?: string;
 
   releasedAt?: string;
+  /**
+   * Whether the model should be shown in user-facing model lists.
+   * Runtime-only aliases can set this to false while staying enabled and resolvable.
+   */
+  visible?: boolean;
 }
+
+export const isAiModelVisible = (model: { visible?: boolean }) => model.visible !== false;
 
 export interface AiModelConfig {
   /**
@@ -244,16 +287,24 @@ export type ExtendParamsType =
   | 'reasoningBudgetToken32k'
   | 'reasoningBudgetToken80k'
   | 'enableReasoning'
+  | 'preserveThinking'
   | 'enableAdaptiveThinking'
   | 'disableContextCaching'
   | 'effort'
+  | 'deepseekV4ReasoningEffort'
   | 'reasoningEffort'
   | 'gpt5ReasoningEffort'
   | 'gpt5_1ReasoningEffort'
   | 'gpt5_2ReasoningEffort'
   | 'gpt5_2ProReasoningEffort'
+  | 'glm5_2ReasoningEffort'
   | 'grok4_20ReasoningEffort'
+  | 'grok4_3ReasoningEffort'
+  | 'hy3ReasoningEffort'
+  | 'ring2_6ReasoningEffort'
   | 'codexMaxReasoningEffort'
+  | 'opus47Effort'
+  | 'step3_5ReasoningEffort'
   | 'textVerbosity'
   | 'thinking'
   | 'thinkingBudget'
@@ -261,14 +312,21 @@ export type ExtendParamsType =
   | 'thinkingLevel2'
   | 'thinkingLevel3'
   | 'thinkingLevel4'
-  | 'thinkingLevel5'
   | 'imageAspectRatio'
   | 'imageAspectRatio2'
   | 'imageResolution'
   | 'imageResolution2'
   | 'urlContext';
 
+export type DisabledParamType = 'temperature' | 'top_p' | 'frequency_penalty' | 'presence_penalty';
+
 export interface AiModelSettings {
+  /**
+   * Chat params that should be hidden from the agent config UI and stripped from
+   * outbound requests. Use this for models whose API rejects specific sampling
+   * params (e.g. Claude Opus 4.7 returns 400 on any non-default temperature / top_p).
+   */
+  disabledParams?: DisabledParamType[];
   extendParams?: ExtendParamsType[];
   /**
    * How the model layer implements search
@@ -282,16 +340,24 @@ export const ExtendParamsTypeSchema = z.enum([
   'reasoningBudgetToken32k',
   'reasoningBudgetToken80k',
   'enableReasoning',
+  'preserveThinking',
   'enableAdaptiveThinking',
   'disableContextCaching',
   'effort',
+  'deepseekV4ReasoningEffort',
   'reasoningEffort',
   'gpt5ReasoningEffort',
   'gpt5_1ReasoningEffort',
   'gpt5_2ReasoningEffort',
   'gpt5_2ProReasoningEffort',
+  'glm5_2ReasoningEffort',
   'grok4_20ReasoningEffort',
+  'grok4_3ReasoningEffort',
+  'hy3ReasoningEffort',
+  'ring2_6ReasoningEffort',
   'codexMaxReasoningEffort',
+  'opus47Effort',
+  'step3_5ReasoningEffort',
   'textVerbosity',
   'thinking',
   'thinkingBudget',
@@ -299,7 +365,6 @@ export const ExtendParamsTypeSchema = z.enum([
   'thinkingLevel2',
   'thinkingLevel3',
   'thinkingLevel4',
-  'thinkingLevel5',
   'imageAspectRatio',
   'imageAspectRatio2',
   'imageResolution',
@@ -309,7 +374,15 @@ export const ExtendParamsTypeSchema = z.enum([
 
 export const ModelSearchImplementTypeSchema = z.enum(['tool', 'params', 'internal']);
 
+export const DisabledParamTypeSchema = z.enum([
+  'temperature',
+  'top_p',
+  'frequency_penalty',
+  'presence_penalty',
+]);
+
 export const AiModelSettingsSchema = z.object({
+  disabledParams: z.array(DisabledParamTypeSchema).optional(),
   extendParams: z.array(ExtendParamsTypeSchema).optional(),
   searchImpl: ModelSearchImplementTypeSchema.optional(),
   searchProvider: z.string().optional(),
@@ -348,9 +421,9 @@ export interface AITTSModelCard extends AIBaseModelCard {
   type: 'tts';
 }
 
-export interface AISTTModelCard extends AIBaseModelCard {
+export interface AIASRModelCard extends AIBaseModelCard {
   pricing?: Pricing;
-  type: 'stt';
+  type: 'asr';
 }
 
 export interface AIRealtimeModelCard extends AIBaseModelCard {
@@ -390,6 +463,7 @@ export interface AiFullModelCard extends AIBaseModelCard {
   maxDimension?: number;
   parameters?: ModelParamsSchema;
   pricing?: Pricing;
+  settings?: AiModelSettings;
   type: AiModelType;
 }
 
@@ -424,13 +498,17 @@ export interface AiProviderModelListItem {
   contextWindowTokens?: number;
   displayName?: string;
   enabled: boolean;
+  family?: string;
+  generation?: string;
   id: string;
+  knowledgeCutoff?: string;
   parameters?: ModelParamsSchema;
   pricing?: Pricing;
   releasedAt?: string;
   settings?: AiModelSettings;
   source?: AiModelSourceType;
   type: AiModelType;
+  visible?: boolean;
 }
 
 // Update
@@ -478,7 +556,10 @@ export interface AiModelForSelect {
   contextWindowTokens?: number;
   description?: string;
   displayName?: string;
+  family?: string;
+  generation?: string;
   id: string;
+  knowledgeCutoff?: string;
   parameters?: ModelParamsSchema;
   /**
    * Exact per-image price (USD) calculated from pricing units
@@ -498,11 +579,15 @@ export interface EnabledAiModel {
   contextWindowTokens?: number;
   displayName?: string;
   enabled?: boolean;
+  family?: string;
+  generation?: string;
   id: string;
+  knowledgeCutoff?: string;
   parameters?: ModelParamsSchema;
   providerId: string;
   releasedAt?: string;
   settings?: AiModelSettings;
   sort?: number;
   type: AiModelType;
+  visible?: boolean;
 }

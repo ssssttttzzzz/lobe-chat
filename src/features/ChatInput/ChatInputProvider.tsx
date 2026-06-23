@@ -3,6 +3,7 @@ import { type ReactNode } from 'react';
 import { memo, useRef } from 'react';
 
 import { createStore, Provider } from './store';
+import { DEFAULT_CHAT_INPUT_FEATURE } from './store/initialState';
 import { type StoreUpdaterProps } from './StoreUpdater';
 import StoreUpdater from './StoreUpdater';
 
@@ -14,6 +15,9 @@ export const ChatInputProvider = memo<ChatInputProviderProps>(
   ({
     agentId,
     children,
+    contextWindowMessages,
+    draftKey,
+    feature = DEFAULT_CHAT_INPUT_FEATURE,
     leftActions,
     rightActions,
     mobile,
@@ -25,6 +29,7 @@ export const ChatInputProvider = memo<ChatInputProviderProps>(
     mentionItems,
     allowExpand = true,
     slashPlacement,
+    getMessages,
   }) => {
     const editor = useEditor();
     const slashMenuRef = useRef<HTMLDivElement>(null);
@@ -34,7 +39,10 @@ export const ChatInputProvider = memo<ChatInputProviderProps>(
         createStore={() =>
           createStore({
             allowExpand,
+            contextWindowMessages,
+            draftKey,
             editor,
+            feature,
             leftActions,
             mentionItems,
             mobile,
@@ -50,6 +58,10 @@ export const ChatInputProvider = memo<ChatInputProviderProps>(
           agentId={agentId}
           allowExpand={allowExpand}
           chatInputEditorRef={chatInputEditorRef}
+          contextWindowMessages={contextWindowMessages}
+          draftKey={draftKey}
+          feature={feature}
+          getMessages={getMessages}
           leftActions={leftActions}
           mentionItems={mentionItems}
           mobile={mobile}

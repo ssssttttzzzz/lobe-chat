@@ -5,9 +5,10 @@ import { type ChatInputActionsProps, type Editor } from '@lobehub/editor/react';
 import { type CSSProperties } from 'react';
 import { memo } from 'react';
 
+import SafeBoundary from '@/components/ErrorBoundary';
+
 import DocumentIdMode from './DocumentIdMode';
 import EditorDataMode from './EditorDataMode';
-import { EditorErrorBoundary } from './ErrorBoundary';
 import InternalEditor from './InternalEditor';
 
 /**
@@ -41,11 +42,20 @@ export interface EditorCanvasProps {
    */
   autoSave?: boolean;
 
+  disabled?: boolean;
+
   /**
    * Document ID to load from server.
    * When provided, component will use useSWR to fetch document data.
    */
   documentId?: string;
+
+  /**
+   * Whether the editor accepts input. Defaults to true. Set false to render
+   * the content read-only (still preserves Lexical-node attributes like image
+   * width/height, which a plain markdown renderer would drop).
+   */
+  editable?: boolean;
 
   /**
    * Editor data to render directly (skip fetch).
@@ -85,6 +95,12 @@ export interface EditorCanvasProps {
   onInit?: (editor: IEditor) => void;
 
   /**
+   * Press-enter handler. Return true to claim the event (suppresses newline).
+   * Forwarded to the underlying Editor.
+   */
+  onPressEnter?: (props: { editor: IEditor; event: KeyboardEvent }) => boolean | void;
+
+  /**
    * Placeholder text for empty editor
    */
   placeholder?: string;
@@ -114,6 +130,12 @@ export interface EditorCanvasProps {
    * Extra items to add to the floating toolbar (e.g., "Ask Copilot" button)
    */
   toolbarExtraItems?: ChatInputActionsProps['items'];
+
+  /**
+   * Topic ID for notebook documents.
+   * Used to preserve active topic document context after leaving the page route.
+   */
+  topicId?: string | null;
 
   /**
    * Unsaved changes guard for documentId mode.
@@ -148,18 +170,18 @@ export const EditorCanvas = memo<EditorCanvasWithEditorProps>(
     // documentId mode - fetch and render with loading/error states
     if (documentId) {
       return (
-        <EditorErrorBoundary>
+        <SafeBoundary alertTitle="Editor Error" variant="alert">
           <DocumentIdMode documentId={documentId} editor={editor} {...props} />
-        </EditorErrorBoundary>
+        </SafeBoundary>
       );
     }
 
     // editorData mode - render with provided data
     if (editorData) {
       return (
-        <EditorErrorBoundary>
+        <SafeBoundary alertTitle="Editor Error" variant="alert">
           <EditorDataMode editor={editor} editorData={editorData} entityId={entityId} {...props} />
-        </EditorErrorBoundary>
+        </SafeBoundary>
       );
     }
 
@@ -167,9 +189,9 @@ export const EditorCanvas = memo<EditorCanvasWithEditorProps>(
     if (!editor) return null;
 
     return (
-      <EditorErrorBoundary>
+      <SafeBoundary alertTitle="Editor Error" variant="alert">
         <InternalEditor editor={editor} {...props} />
-      </EditorErrorBoundary>
+      </SafeBoundary>
     );
   },
 );

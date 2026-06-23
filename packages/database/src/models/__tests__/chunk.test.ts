@@ -5,7 +5,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { uuid } from '@/utils/uuid';
 
 import { getTestDB } from '../../core/getTestDB';
-import { chunks, embeddings, fileChunks, files, unstructuredChunks, users } from '../../schemas';
+import {
+  chunks,
+  embeddings,
+  fileChunks,
+  files,
+  unstructuredChunks,
+  users,
+  workspaces,
+} from '../../schemas';
 import type { LobeChatDatabase } from '../../type';
 import { ChunkModel } from '../chunk';
 import { codeEmbedding, designThinkingQuery, designThinkingQuery2 } from './fixtures/embedding';
@@ -13,6 +21,7 @@ import { codeEmbedding, designThinkingQuery, designThinkingQuery2 } from './fixt
 const serverDB: LobeChatDatabase = await getTestDB();
 
 const userId = 'chunk-model-test-user-id';
+const workspaceId = 'chunk-model-workspace';
 const chunkModel = new ChunkModel(serverDB, userId);
 const sharedFileList = [
   {
@@ -44,6 +53,12 @@ const sharedFileList = [
 beforeEach(async () => {
   await serverDB.delete(users);
   await serverDB.insert(users).values([{ id: userId }]);
+  await serverDB.insert(workspaces).values({
+    id: workspaceId,
+    name: 'Chunk Workspace',
+    primaryOwnerId: userId,
+    slug: workspaceId,
+  });
   await serverDB.insert(files).values(sharedFileList);
 });
 
@@ -69,17 +84,17 @@ describe('ChunkModel', () => {
       expect(createdChunks[1]).toMatchObject(params[1]);
     });
 
-    // 测试空参数场景
+    // Test empty params scenario
     it('should handle empty params array', async () => {
       const result = await chunkModel.bulkCreate([], '1');
       expect(result).toHaveLength(0);
     });
 
-    // 测试事务回滚
+    // Test transaction rollback
     it('should rollback transaction on error', async () => {
       const invalidParams = [
         { text: 'Chunk 1', userId },
-        { index: 'abc', userId }, // 这会导致错误
+        { index: 'abc', userId }, // This will cause an error
       ] as any;
 
       await expect(chunkModel.bulkCreate(invalidParams, '1')).rejects.toThrow();
@@ -203,7 +218,7 @@ describe('ChunkModel', () => {
       expect(result[1].id).toBe(chunk2.id);
       expect(result[0].similarity).toBeGreaterThan(result[1].similarity);
     });
-    // 补充无文件 ID 的搜索场景
+    // Additional search scenario without file ID
     it('should perform semantic search without fileIds', async () => {
       const [chunk1, chunk2] = await serverDB
         .insert(chunks)
@@ -228,7 +243,7 @@ describe('ChunkModel', () => {
       expect(result).toHaveLength(2);
     });
 
-    // 测试空结果场景
+    // Test empty result scenario
     it('should return empty array when no matches found', async () => {
       const result = await chunkModel.semanticSearch({
         embedding: designThinkingQuery,
@@ -382,6 +397,27 @@ describe('ChunkModel', () => {
 
       expect(result).toHaveLength(0);
     });
+
+    it('should not count workspace chunks from personal scope', async () => {
+      await serverDB.insert(files).values({
+        id: 'workspace-file',
+        name: 'workspace.pdf',
+        url: 'https://example.com/workspace.pdf',
+        size: 1000,
+        fileType: 'application/pdf',
+        userId,
+        workspaceId,
+      });
+      const [chunk] = await serverDB
+        .insert(chunks)
+        .values({ text: 'Workspace Chunk', userId, workspaceId })
+        .returning();
+      await serverDB
+        .insert(fileChunks)
+        .values({ chunkId: chunk.id, fileId: 'workspace-file', userId, workspaceId });
+
+      await expect(chunkModel.countByFileIds(['workspace-file'])).resolves.toHaveLength(0);
+    });
   });
 
   describe('countByFileId', () => {
@@ -524,7 +560,7 @@ content in Table html is below:
   });
 
   describe('semanticSearchForChat', () => {
-    // 测试空文件 ID 列表场景
+    // Test empty file ID list scenario
     it('should return empty array when fileIds is empty', async () => {
       const result = await chunkModel.semanticSearchForChat({
         embedding: designThinkingQuery,
@@ -535,7 +571,7 @@ content in Table html is below:
       expect(result).toHaveLength(0);
     });
 
-    // 测试结果限制
+    // Test result limit
     it('should limit results to 15 items', async () => {
       const fileId = '1';
       // Create 24 chunks

@@ -12,6 +12,7 @@ import { autoUpdater } from 'electron-updater';
 import { isDev, isWindows } from '@/const/env';
 import { getDesktopEnv } from '@/env';
 import { UPDATE_CHANNEL, UPDATE_SERVER_URL, updaterConfig } from '@/modules/updater/configs';
+import { extractRestoreRoute } from '@/modules/updater/utils';
 import { createLogger } from '@/utils/logger';
 
 import type { App as AppCore } from '../App';
@@ -139,9 +140,7 @@ export class UpdaterManager {
   public switchChannel = (channel: UpdateChannel) => {
     logger.info(`Switching update channel: ${this.currentChannel} -> ${channel}`);
 
-    const isDowngrade =
-      (this.currentChannel === 'canary' && channel !== 'canary') ||
-      (this.currentChannel === 'nightly' && channel === 'stable');
+    const isDowngrade = this.currentChannel === 'canary' && channel === 'stable';
 
     this.currentChannel = channel;
     autoUpdater.allowDowngrade = isDowngrade;
@@ -241,11 +240,28 @@ export class UpdaterManager {
     }
   };
 
+  private captureRestoreRoute = () => {
+    try {
+      const url = this.mainWindow.webContents?.getURL();
+      if (!url) return;
+
+      const route = extractRestoreRoute(url);
+      if (!route) return;
+
+      this.app.storeManager.set('pendingRestoreRoute', route);
+      logger.info(`Captured route for restore after update restart: ${route}`);
+    } catch (error) {
+      logger.warn('Failed to capture route for restore after update restart:', error);
+    }
+  };
+
   /**
    * Install update immediately
    */
   public installNow = () => {
     logger.info('Installing update now...');
+
+    this.captureRestoreRoute();
 
     this.app.isQuiting = true;
 
@@ -366,7 +382,7 @@ export class UpdaterManager {
 
   /**
    * Strip trailing channel path from URL so we can re-append the correct channel.
-   * Handles both base URL (https://cdn.example.com) and legacy URL with channel (https://cdn.example.com/stable)
+   * Handles both base URL (https://cdn.example.com) and legacy URLs with channel suffixes.
    */
   private getBaseUpdateUrl(): string | undefined {
     if (!UPDATE_SERVER_URL) return undefined;

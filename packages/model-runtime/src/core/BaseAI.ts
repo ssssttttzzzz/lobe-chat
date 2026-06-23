@@ -2,10 +2,15 @@ import type { AIBaseModelCard } from 'model-bank';
 import type OpenAI from 'openai';
 
 import type {
+  ASROptions,
+  ASRPayload,
+  ASRResponse,
   ChatMethodOptions,
   ChatStreamPayload,
+  CreateImageMethodOptions,
   CreateImagePayload,
   CreateImageResponse,
+  CreateVideoMethodOptions,
   CreateVideoPayload,
   CreateVideoResponse,
   Embeddings,
@@ -24,9 +29,15 @@ import type {
 export interface LobeRuntimeAI {
   baseURL?: string;
   chat?: (payload: ChatStreamPayload, options?: ChatMethodOptions) => Promise<Response>;
-  createImage?: (payload: CreateImagePayload) => Promise<CreateImageResponse>;
+  createImage?: (
+    payload: CreateImagePayload,
+    options?: CreateImageMethodOptions,
+  ) => Promise<CreateImageResponse>;
 
-  createVideo?: (payload: CreateVideoPayload) => Promise<CreateVideoResponse>;
+  createVideo?: (
+    payload: CreateVideoPayload,
+    options?: CreateVideoMethodOptions,
+  ) => Promise<CreateVideoResponse>;
 
   embeddings?: (payload: EmbeddingsPayload, options?: EmbeddingsOptions) => Promise<Embeddings[]>;
 
@@ -39,6 +50,14 @@ export interface LobeRuntimeAI {
     payload: HandleCreateVideoWebhookPayload,
   ) => Promise<HandleCreateVideoWebhookResult>;
 
+  handlePollVideoStatus?: (
+    inferenceId: string,
+  ) => Promise<
+    | { status: 'success'; videoUrl: string }
+    | { status: 'failed'; error: string }
+    | { status: 'pending' }
+  >;
+
   models?: () => Promise<any>;
 
   // Model management related interface
@@ -48,6 +67,8 @@ export interface LobeRuntimeAI {
     payload: TextToSpeechPayload,
     options?: TextToSpeechOptions,
   ) => Promise<ArrayBuffer>;
+
+  transcribe?: (payload: ASRPayload, options?: ASROptions) => Promise<ASRResponse>;
 }
 /* eslint-enabled */
 
@@ -68,4 +89,8 @@ export abstract class LobeOpenAICompatibleRuntime {
     payload: EmbeddingsPayload,
     options?: EmbeddingsOptions,
   ): Promise<Embeddings[]>;
+
+  transcribe?(payload: ASRPayload, options?: ASROptions): Promise<ASRResponse>;
+
+  textToSpeech?(payload: TextToSpeechPayload, options?: TextToSpeechOptions): Promise<ArrayBuffer>;
 }

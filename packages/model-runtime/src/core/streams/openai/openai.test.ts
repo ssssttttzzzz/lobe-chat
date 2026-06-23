@@ -79,6 +79,57 @@ describe('OpenAIStream', () => {
     expect(onCompletionMock).toHaveBeenCalledTimes(1);
   });
 
+  it('should expose missing usage diagnostics when terminal chunk has no usage', async () => {
+    const mockOpenAIStream = new ReadableStream({
+      start(controller) {
+        controller.enqueue({
+          choices: [
+            {
+              delta: {},
+              finish_reason: 'stop',
+              index: 0,
+            },
+          ],
+          id: 'chatcmpl_missing_usage',
+        });
+        controller.close();
+      },
+    });
+    const onFinal = vi.fn();
+
+    const protocolStream = OpenAIStream(mockOpenAIStream, {
+      callbacks: { onFinal },
+      payload: {
+        apiMode: 'chat_completions',
+        includeUsageRequested: true,
+        model: 'gpt-5.4-mini',
+        provider: 'openai',
+      },
+    });
+
+    const decoder = new TextDecoder();
+    // @ts-ignore
+    for await (const chunk of protocolStream) {
+      decoder.decode(chunk, { stream: true });
+    }
+
+    expect(onFinal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        usageMissingDiagnostics: expect.objectContaining({
+          apiMode: 'chat_completions',
+          finishReason: 'stop',
+          hasUsageMetadata: false,
+          includeUsageRequested: true,
+          model: 'gpt-5.4-mini',
+          provider: 'openai',
+          responseId: 'chatcmpl_missing_usage',
+          source: 'openai_chat_completions',
+          terminalEventType: 'chat.completion.chunk',
+        }),
+      }),
+    );
+  });
+
   it('should handle empty stream', async () => {
     const mockStream = new ReadableStream({
       start(controller) {
@@ -1373,6 +1424,68 @@ describe('OpenAIStream', () => {
   });
 
   describe('Reasoning', () => {
+    it('should handle GitHub Copilot reasoning_text in delta chunks', async () => {
+      const data = [
+        {
+          id: 'reasoning-text-1',
+          object: 'chat.completion.chunk',
+          created: 1774512975,
+          model: 'gemini-3.1-pro-preview',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                content: null,
+                role: 'assistant',
+                reasoning_text: '这是 reasoning_text 内容',
+              },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          id: 'reasoning-text-1',
+          object: 'chat.completion.chunk',
+          created: 1774512976,
+          model: 'gemini-3.1-pro-preview',
+          choices: [
+            {
+              index: 0,
+              delta: {},
+              finish_reason: 'stop',
+            },
+          ],
+        },
+      ];
+
+      const mockOpenAIStream = new ReadableStream({
+        start(controller) {
+          data.forEach((chunk) => controller.enqueue(chunk));
+          controller.close();
+        },
+      });
+
+      const protocolStream = OpenAIStream(mockOpenAIStream);
+      const decoder = new TextDecoder();
+      const chunks: string[] = [];
+
+      // @ts-ignore
+      for await (const chunk of protocolStream) {
+        chunks.push(decoder.decode(chunk, { stream: true }));
+      }
+
+      expect(chunks).toEqual(
+        [
+          'id: reasoning-text-1',
+          'event: reasoning',
+          `data: "这是 reasoning_text 内容"\n`,
+          'id: reasoning-text-1',
+          'event: stop',
+          `data: "stop"\n`,
+        ].map((i) => `${i}\n`),
+      );
+    });
+
     it('should handle <think></think> tags in streaming content', async () => {
       const data = [
         {
@@ -3312,6 +3425,52 @@ describe('OpenAIStream', () => {
     ]);
   });
 
+  it('should filter out empty url_citation annotations (OpenRouter built-in search)', async () => {
+    // OpenRouter's built-in web search may emit empty citation objects like `{}`,
+    // which previously crashed rendering (`new URL(undefined)`) and message persistence.
+    // See https://github.com/lobehub/lobehub/issues/15043
+    const mockOpenAIStream = new ReadableStream({
+      start(controller) {
+        controller.enqueue({
+          id: 'openrouter-search',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                annotations: [
+                  { type: 'url_citation', url_citation: {} },
+                  {
+                    type: 'url_citation',
+                    url_citation: { url: 'https://example.com', title: 'Example' },
+                  },
+                ],
+              },
+              finish_reason: 'stop',
+            },
+          ],
+        });
+
+        controller.close();
+      },
+    });
+
+    const protocolStream = OpenAIStream(mockOpenAIStream);
+
+    const decoder = new TextDecoder();
+    const chunks = [];
+
+    // @ts-ignore
+    for await (const chunk of protocolStream) {
+      chunks.push(decoder.decode(chunk, { stream: true }));
+    }
+
+    expect(chunks).toEqual([
+      'id: openrouter-search\n',
+      'event: grounding\n',
+      `data: {"citations":[{"title":"Example","url":"https://example.com"}]}\n\n`,
+    ]);
+  });
+
   it('should handle XiaomiMiMo annotations', async () => {
     const mockOpenAIStream = new ReadableStream({
       start(controller) {
@@ -3525,6 +3684,49 @@ describe('OpenAIStream', () => {
 
     expect(chunks).toEqual([
       'id: finish-usage\n',
+      'event: usage\n',
+      `data: {"inputTextTokens":10,"outputTextTokens":20,"totalInputTokens":10,"totalOutputTokens":20,"totalTokens":30}\n\n`,
+    ]);
+  });
+
+  it('should handle finish_reason with text and usage', async () => {
+    const mockOpenAIStream = new ReadableStream({
+      start(controller) {
+        controller.enqueue({
+          id: 'finish-text-usage',
+          choices: [
+            {
+              index: 0,
+              delta: { content: 'done' },
+              finish_reason: 'stop',
+            },
+          ],
+          usage: {
+            prompt_tokens: 10,
+            completion_tokens: 20,
+            total_tokens: 30,
+          },
+        });
+
+        controller.close();
+      },
+    });
+
+    const protocolStream = OpenAIStream(mockOpenAIStream);
+
+    const decoder = new TextDecoder();
+    const chunks = [];
+
+    // @ts-ignore
+    for await (const chunk of protocolStream) {
+      chunks.push(decoder.decode(chunk, { stream: true }));
+    }
+
+    expect(chunks).toEqual([
+      'id: finish-text-usage\n',
+      'event: text\n',
+      'data: "done"\n\n',
+      'id: finish-text-usage\n',
       'event: usage\n',
       `data: {"inputTextTokens":10,"outputTextTokens":20,"totalInputTokens":10,"totalOutputTokens":20,"totalTokens":30}\n\n`,
     ]);

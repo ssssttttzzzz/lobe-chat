@@ -13,11 +13,13 @@ import { serverConfigSelectors } from '@/store/serverConfig/selectors';
 import { useUserStore } from '@/store/user';
 import { settingsSelectors } from '@/store/user/slices/settings/selectors/settings';
 
+import ClaimResourcesModal from './ClaimResourcesModal';
 import { MarketAuthError } from './errors';
 import { marketAuthEvents } from './events';
 import MarketAuthConfirmModal from './MarketAuthConfirmModal';
 import { MarketOIDC } from './oidc';
 import ProfileSetupModal from './ProfileSetupModal';
+import type { MarketAuthScene } from './scenes';
 import {
   type MarketAuthContextType,
   type MarketAuthSession,
@@ -26,6 +28,7 @@ import {
   type OIDCConfig,
 } from './types';
 import { useMarketUserProfile } from './useMarketUserProfile';
+import { type ClaimableResources } from './useSocialConnect';
 
 const MarketAuthContext = createContext<MarketAuthContextType | null>(null);
 
@@ -137,6 +140,7 @@ export const MarketAuthProvider = ({ children, isDesktop }: MarketAuthProviderPr
   const [status, setStatus] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
   const [oidcClient, setOidcClient] = useState<MarketOIDC | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [authScene, setAuthScene] = useState<MarketAuthScene>('default');
   const [showProfileSetupModal, setShowProfileSetupModal] = useState(false);
   const [isFirstTimeSetup, setIsFirstTimeSetup] = useState(false);
   const [pendingSignInResolve, setPendingSignInResolve] = useState<
@@ -147,6 +151,11 @@ export const MarketAuthProvider = ({ children, isDesktop }: MarketAuthProviderPr
   );
   const [pendingProfileSuccessCallback, setPendingProfileSuccessCallback] = useState<
     ((_profile: MarketUserProfile) => void) | null
+  >(null);
+  const [claimableResources, setClaimableResources] = useState<ClaimableResources | null>(null);
+  const [showClaimModal, setShowClaimModal] = useState(false);
+  const [pendingClaimSuccessCallback, setPendingClaimSuccessCallback] = useState<
+    (() => void) | null
   >(null);
 
   // Subscribe to user store init state; when isUserStateInit is true, settings data is fully loaded
@@ -172,7 +181,7 @@ export const MarketAuthProvider = ({ children, isDesktop }: MarketAuthProviderPr
         baseUrl,
         clientId: isDesktop ? 'lobehub-desktop' : 'lobechat-com',
         redirectUri,
-        scope: 'openid profile email',
+        scope: 'openid profile email offline_access',
       };
       setOidcClient(new MarketOIDC(oidcConfig));
     }
@@ -336,11 +345,12 @@ export const MarketAuthProvider = ({ children, isDesktop }: MarketAuthProviderPr
       const userInfo = await fetchUserInfo(tokenResponse.accessToken);
 
       // Create session object
-      const expiresAt = Date.now() + tokenResponse.expiresIn * 1000;
+      const expiresIn = tokenResponse.expiresIn ?? 3600;
+      const expiresAt = Date.now() + expiresIn * 1000;
       const newSession: MarketAuthSession = {
         accessToken: tokenResponse.accessToken,
         expiresAt,
-        expiresIn: tokenResponse.expiresIn,
+        expiresIn,
         scope: tokenResponse.scope,
         tokenType: tokenResponse.tokenType as 'Bearer',
         userInfo: userInfo || undefined,
@@ -383,7 +393,11 @@ export const MarketAuthProvider = ({ children, isDesktop }: MarketAuthProviderPr
   /**
    * Sign-in method (shows confirmation dialog first)
    */
-  const signIn = useCallback(async (): Promise<number | null> => {
+  const signIn = useCallback(async (scene: MarketAuthScene = 'default'): Promise<number | null> => {
+    if (!useUserStore.getState().isSignedIn) {
+      throw new Error('LobeChat session required');
+    }
+    setAuthScene(scene);
     return new Promise<number | null>((resolve, reject) => {
       setPendingSignInResolve(() => resolve);
       setPendingSignInReject(() => reject);
@@ -487,6 +501,74 @@ export const MarketAuthProvider = ({ children, isDesktop }: MarketAuthProviderPr
   }, []);
 
   /**
+   * Show claim resources modal (called from ProfileSetupModal after save)
+   */
+  const handleShowClaimResources = useCallback((resources: ClaimableResources) => {
+    setClaimableResources(resources);
+    setShowClaimModal(true);
+  }, []);
+
+  /**
+   * Close claim resources modal
+   */
+  const handleCloseClaimModal = useCallback(() => {
+    setShowClaimModal(false);
+    setClaimableResources(null);
+    setPendingClaimSuccessCallback(null);
+  }, []);
+
+  /**
+   * Handle claim success - refresh user profile data
+   */
+  const handleClaimSuccess = useCallback(() => {
+    setShowClaimModal(false);
+    setClaimableResources(null);
+
+    // Call the pending success callback if provided (e.g., page-level mutate)
+    if (pendingClaimSuccessCallback) {
+      pendingClaimSuccessCallback();
+      setPendingClaimSuccessCallback(null);
+    }
+
+    // Also refresh all user-profile related SWR cache as fallback
+    globalMutate((key) => typeof key === 'string' && key.startsWith('user-profile'), undefined, {
+      revalidate: true,
+    });
+  }, [pendingClaimSuccessCallback]);
+
+  /**
+   * Check for claimable resources and show modal if any found
+   * Call this when user enters their profile page
+   * @param onClaimSuccess - Optional callback to run after successful claim (e.g., to refresh page data)
+   */
+  const checkAndShowClaimableResources = useCallback(
+    async (onClaimSuccess?: () => void): Promise<boolean> => {
+      // Only check if user is authenticated
+      if (status !== 'authenticated') {
+        return false;
+      }
+
+      try {
+        const result = await lambdaClient.market.socialProfile.scanClaimableResources.query();
+        if (result.plugins.length > 0 || result.skills.length > 0) {
+          // Store the callback for when claim succeeds
+          if (onClaimSuccess) {
+            setPendingClaimSuccessCallback(() => onClaimSuccess);
+          }
+          setClaimableResources(result);
+          setShowClaimModal(true);
+          return true;
+        }
+        return false;
+      } catch (error) {
+        console.error('[MarketAuth] Failed to check claimable resources:', error);
+        return false;
+      }
+    },
+    [status],
+  );
+
+  /**
    * Profile update success callback
    */
   const handleProfileUpdateSuccess = useCallback(() => {
@@ -554,30 +636,33 @@ export const MarketAuthProvider = ({ children, isDesktop }: MarketAuthProviderPr
    * Attempts to refresh token first, then triggers signIn if refresh fails
    * @returns true if successfully re-authenticated, false if user cancelled or failed
    */
-  const handleUnauthorized = useCallback(async (): Promise<boolean> => {
-    console.info('[MarketAuth] Handling unauthorized error, attempting recovery...');
+  const handleUnauthorized = useCallback(
+    async (scene: MarketAuthScene = 'default'): Promise<boolean> => {
+      console.info('[MarketAuth] Handling unauthorized error, attempting recovery...');
 
-    // First try to refresh the token
-    const refreshed = await refreshToken();
-    if (refreshed) {
-      console.info('[MarketAuth] Token refresh successful, recovered from 401');
-      return true;
-    }
-
-    // Refresh failed, need to re-authenticate
-    console.info('[MarketAuth] Token refresh failed, triggering signIn...');
-    try {
-      const accountId = await signIn();
-      if (accountId !== null) {
-        console.info('[MarketAuth] Re-authentication successful');
+      // First try to refresh the token
+      const refreshed = await refreshToken();
+      if (refreshed) {
+        console.info('[MarketAuth] Token refresh successful, recovered from 401');
         return true;
       }
-      return false;
-    } catch (error) {
-      console.error('[MarketAuth] Re-authentication failed:', error);
-      return false;
-    }
-  }, [refreshToken, signIn]);
+
+      // Refresh failed, need to re-authenticate
+      console.info('[MarketAuth] Token refresh failed, triggering signIn...');
+      try {
+        const accountId = await signIn(scene);
+        if (accountId !== null) {
+          console.info('[MarketAuth] Re-authentication successful');
+          return true;
+        }
+        return false;
+      } catch (error) {
+        console.error('[MarketAuth] Re-authentication failed:', error);
+        return false;
+      }
+    },
+    [refreshToken, signIn],
+  );
 
   /**
    * Restore session and fetch user info on initialization
@@ -629,14 +714,23 @@ export const MarketAuthProvider = ({ children, isDesktop }: MarketAuthProviderPr
   useEffect(() => {
     const unsubscribe = marketAuthEvents.on('market-unauthorized', async (event) => {
       console.info('[MarketAuth] Received unauthorized event for path:', event.path);
-      // Attempt to recover (refresh token or re-authenticate)
-      await handleUnauthorized();
+      if (isDesktop) {
+        const refreshed = await refreshToken();
+        if (!refreshed) {
+          // Silent refresh failed — the Market OAuth token is genuinely expired.
+          // Show the Market auth modal so the user can re-authorize.
+          await handleUnauthorized(event.scene);
+        }
+        return;
+      }
+      await handleUnauthorized(event.scene);
     });
 
     return unsubscribe;
-  }, [handleUnauthorized]);
+  }, [handleUnauthorized, isDesktop, refreshToken]);
 
   const contextValue: MarketAuthContextType = {
+    checkAndShowClaimableResources,
     getAccessToken,
     getCurrentUserInfo,
     getRefreshToken,
@@ -691,6 +785,7 @@ export const MarketAuthProvider = ({ children, isDesktop }: MarketAuthProviderPr
       {children}
       <MarketAuthConfirmModal
         open={showConfirmModal}
+        scene={authScene}
         onCancel={handleCancelAuth}
         onConfirm={handleConfirmAuth}
       />
@@ -701,8 +796,17 @@ export const MarketAuthProvider = ({ children, isDesktop }: MarketAuthProviderPr
         open={showProfileSetupModal}
         userProfile={userProfile}
         onClose={handleCloseProfileSetup}
+        onShowClaimResources={handleShowClaimResources}
         onSuccess={handleProfileSuccess}
       />
+      {claimableResources && (
+        <ClaimResourcesModal
+          open={showClaimModal}
+          resources={claimableResources}
+          onClose={handleCloseClaimModal}
+          onSuccess={handleClaimSuccess}
+        />
+      )}
     </MarketAuthContext>
   );
 };

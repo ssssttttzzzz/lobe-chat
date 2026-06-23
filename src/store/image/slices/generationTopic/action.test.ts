@@ -48,7 +48,7 @@ vi.mock('@/store/user/selectors', () => ({
     }),
   },
   userGeneralSettingsSelectors: {
-    responseLanguage: vi.fn(() => undefined),
+    currentResponseLanguage: vi.fn(() => 'en-US'),
   },
 }));
 
@@ -465,7 +465,7 @@ describe('GenerationTopicAction', () => {
         await result.current.refreshGenerationTopics();
       });
 
-      expect(mutate).toHaveBeenCalledWith(['fetchGenerationTopics']);
+      expect(mutate).toHaveBeenCalledWith(['image:generationTopics']);
     });
   });
 

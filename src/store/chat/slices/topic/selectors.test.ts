@@ -1,4 +1,3 @@
-import { TopicDisplayMode } from '@lobechat/types';
 import dayjs from 'dayjs';
 import { describe, expect, it } from 'vitest';
 
@@ -59,6 +58,62 @@ describe('topicSelectors', () => {
       const state = merge(initialStore, { topicDataMap, activeAgentId: 'test' });
       const length = topicSelectors.currentTopicLength(state);
       expect(length).toBe(topicItems.length);
+    });
+  });
+
+  describe('hasMoreTopics', () => {
+    it('should return true when total exceeds pageSize even if hasMore is temporarily false', () => {
+      const state = merge(initialStore, {
+        activeAgentId: 'test',
+        topicDataMap: {
+          [topicMapKey({ agentId: 'test' })]: {
+            currentPage: 0,
+            hasMore: false,
+            items: Array.from({ length: 20 }, (_, index) => ({ id: `topic-${index}` })),
+            pageSize: 20,
+            total: 21,
+          },
+        },
+      });
+
+      expect(topicSelectors.hasMoreTopics(state)).toBe(false);
+      expect(topicSelectors.hasMoreTopicsForSidebar(state)).toBe(true);
+    });
+
+    it('should return false when all topics are already loaded', () => {
+      const state = merge(initialStore, {
+        activeAgentId: 'test',
+        topicDataMap: {
+          [topicMapKey({ agentId: 'test' })]: {
+            currentPage: 1,
+            hasMore: false,
+            items: Array.from({ length: 21 }, (_, index) => ({ id: `topic-${index}` })),
+            pageSize: 20,
+            total: 21,
+          },
+        },
+      });
+
+      expect(topicSelectors.hasMoreTopics(state)).toBe(false);
+      expect(topicSelectors.hasMoreTopicsForSidebar(state)).toBe(true);
+    });
+
+    it('should return false for sidebar when total does not exceed pageSize', () => {
+      const state = merge(initialStore, {
+        activeAgentId: 'test',
+        topicDataMap: {
+          [topicMapKey({ agentId: 'test' })]: {
+            currentPage: 1,
+            hasMore: false,
+            items: Array.from({ length: 21 }, (_, index) => ({ id: `topic-${index}` })),
+            pageSize: 30,
+            total: 21,
+          },
+        },
+      });
+
+      expect(topicSelectors.hasMoreTopics(state)).toBe(false);
+      expect(topicSelectors.hasMoreTopicsForSidebar(state)).toBe(false);
     });
   });
 
@@ -358,13 +413,10 @@ describe('topicSelectors', () => {
         activeAgentId: 'test',
       });
 
-    it('should group by createdAt when displayMode is ByCreatedTime', () => {
+    it('should group by createdAt when sortBy is createdAt', () => {
       const state = createStateWithTopics(topicsWithDifferentTimes);
 
-      const grouped = topicSelectors.groupedTopicsForSidebar(
-        20,
-        TopicDisplayMode.ByCreatedTime,
-      )(state);
+      const grouped = topicSelectors.groupedTopicsForSidebar(20, 'createdAt')(state);
 
       // "Old but active" was created last year, so it should be in a separate group from "New and active"
       expect(grouped.length).toBeGreaterThanOrEqual(2);
@@ -374,13 +426,10 @@ describe('topicSelectors', () => {
       expect(groupIds).toContain(dayjs(lastYear).year().toString());
     });
 
-    it('should group by updatedAt when displayMode is ByUpdatedTime', () => {
+    it('should group by updatedAt when sortBy is updatedAt', () => {
       const state = createStateWithTopics(topicsWithDifferentTimes);
 
-      const grouped = topicSelectors.groupedTopicsForSidebar(
-        20,
-        TopicDisplayMode.ByUpdatedTime,
-      )(state);
+      const grouped = topicSelectors.groupedTopicsForSidebar(20, 'updatedAt')(state);
 
       // Both topics have updatedAt = now, so they should be in the same group
       expect(grouped).toHaveLength(1);
@@ -391,10 +440,7 @@ describe('topicSelectors', () => {
     it('should return empty array when no topics exist', () => {
       const state = merge(initialStore, { activeAgentId: 'test' });
 
-      const grouped = topicSelectors.groupedTopicsForSidebar(
-        20,
-        TopicDisplayMode.ByUpdatedTime,
-      )(state);
+      const grouped = topicSelectors.groupedTopicsForSidebar(20, 'updatedAt')(state);
 
       expect(grouped).toEqual([]);
     });
@@ -410,13 +456,45 @@ describe('topicSelectors', () => {
 
       const state = createStateWithTopics(manyTopics);
 
-      const grouped = topicSelectors.groupedTopicsForSidebar(
-        3,
-        TopicDisplayMode.ByUpdatedTime,
-      )(state);
+      const grouped = topicSelectors.groupedTopicsForSidebar(3, 'updatedAt')(state);
 
       const totalChildren = grouped.reduce((sum, g) => sum + g.children.length, 0);
       expect(totalChildren).toBe(3);
+    });
+
+    it('should place the pending group right below favorites in byStatus mode', () => {
+      const state = createStateWithTopics([
+        {
+          id: 'fav',
+          title: 'Fav',
+          favorite: true,
+          status: 'active',
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: 'failed',
+          title: 'Failed',
+          favorite: false,
+          status: 'failed',
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: 'active',
+          title: 'Active',
+          favorite: false,
+          status: 'active',
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]);
+
+      const grouped = topicSelectors.groupedTopicsForSidebar(20, 'updatedAt', 'byStatus')(state);
+
+      // favorites stay pinned at the top; pending follows right below, then the rest
+      expect(grouped.map((g) => g.id)).toEqual(['favorite', 'pending', 'active']);
+      expect(grouped[1].children.map((t) => t.id)).toEqual(['failed']);
     });
   });
 });

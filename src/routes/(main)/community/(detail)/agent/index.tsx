@@ -2,7 +2,7 @@
 
 import { Flexbox } from '@lobehub/ui';
 import { memo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 
 import { useQuery } from '@/hooks/useQuery';
 import { useDiscoverStore } from '@/store/discover';
@@ -31,7 +31,7 @@ const AssistantDetailPage = memo<AssistantDetailPageProps>(({ mobile }) => {
   if (isLoading) return <Loading />;
   if (!data) return <NotFound />;
 
-  // 检查助理状态
+  // Check assistant status
   const status = (data as any)?.status;
   if (status === 'unpublished' || status === 'archived' || status === 'deprecated') {
     return <StatusPage status={status} />;

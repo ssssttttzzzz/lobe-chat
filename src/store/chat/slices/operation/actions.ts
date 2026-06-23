@@ -5,11 +5,14 @@ import { produce } from 'immer';
 import { type ChatStore } from '@/store/chat/store';
 import { type MessageMapKeyInput } from '@/store/chat/utils/messageMapKey';
 import { messageMapKey } from '@/store/chat/utils/messageMapKey';
+import { topicMapKey } from '@/store/chat/utils/topicMapKey';
+import { getHomeStoreState } from '@/store/home';
 import { type StoreSetter } from '@/store/types';
 import { setNamespace } from '@/utils/storeDebug';
 
 import {
   type AfterCompletionCallback,
+  AI_RUNTIME_OPERATION_TYPES,
   type Operation,
   type OperationCancelContext,
   type OperationContext,
@@ -17,6 +20,7 @@ import {
   type OperationMetadata,
   type OperationStatus,
   type OperationType,
+  type QueuedMessage,
 } from './types';
 
 const n = setNamespace('operation');
@@ -47,23 +51,39 @@ export class OperationActionsImpl {
     if (context?.operationId) {
       const operation = this.#get().operations[context.operationId];
       if (!operation) {
+        // The op was already cleaned up (e.g. completed CC turn whose
+        // runtime_end fired and was GC'd 30s later), but a late caller
+        // — typically a long-lived intervention surface — still carries
+        // the opId. Throwing here would tear down the optimistic write
+        // and any follow-up IPC the caller was about to perform, so we
+        // degrade to the global-state fallback and log loudly.
         log(
-          '[internal_getConversationContext] ERROR: Operation not found: %s',
+          '[internal_getConversationContext] WARNING: Operation not found, falling back to global state: %s',
           context.operationId,
         );
-        throw new Error(`Operation not found: ${context.operationId}`);
+        console.warn(
+          '[internal_getConversationContext] operation not found, using global state:',
+          context.operationId,
+        );
+      } else {
+        const { agentId, topicId, threadId, scope, isNew, groupId, documentId } = operation.context;
+        log(
+          '[internal_getConversationContext] get from operation %s: agentId=%s, topicId=%s, threadId=%s, scope=%s, groupId=%s, documentId=%s',
+          context.operationId,
+          agentId,
+          topicId,
+          threadId,
+          scope,
+          groupId,
+          documentId,
+        );
+        // Spread the whole operation context so every bucket-key field carries
+        // through — notably `documentId` (page-scoped optimistic writes resolve
+        // to the same `page_<agent>_<documentId>` bucket the editor reads from,
+        // not `page_<agent>_new`) and `subAgentId` (group_agent scope's
+        // subTopicId). Only agentId needs the non-null assertion.
+        return { ...operation.context, agentId: agentId! };
       }
-      const { agentId, topicId, threadId, scope, isNew, groupId } = operation.context;
-      log(
-        '[internal_getConversationContext] get from operation %s: agentId=%s, topicId=%s, threadId=%s, scope=%s, groupId=%s',
-        context.operationId,
-        agentId,
-        topicId,
-        threadId,
-        scope,
-        groupId,
-      );
-      return { agentId: agentId!, topicId, threadId, scope, isNew, groupId };
     }
 
     // Fallback to global state
@@ -159,11 +179,7 @@ export class OperationActionsImpl {
 
         // Update context index (if agentId exists)
         if (context.agentId) {
-          const contextKey = messageMapKey({
-            agentId: context.agentId,
-            groupId: context.groupId,
-            topicId: context.topicId !== undefined ? context.topicId : null,
-          });
+          const contextKey = messageMapKey(context as MessageMapKeyInput);
           if (!state.operationsByContext[contextKey]) {
             state.operationsByContext[contextKey] = [];
           }
@@ -275,7 +291,12 @@ export class OperationActionsImpl {
         if (!operation) return;
 
         const now = Date.now();
-        operation.status = 'completed';
+
+        // Don't override cancelled status - preserve user interruption state
+        if (operation.status !== 'cancelled') {
+          operation.status = 'completed';
+        }
+
         operation.metadata.endTime = now;
         operation.metadata.duration = now - operation.metadata.startTime;
 
@@ -387,9 +408,11 @@ export class OperationActionsImpl {
       // Ignore abort errors
     }
 
-    // 2. Set isAborting flag immediately for execAgentRuntime operations
-    // This ensures UI (loading button) responds instantly to user cancellation
-    if (operation.type === 'execAgentRuntime') {
+    // 2. Set isAborting flag immediately for agent-runtime operations.
+    // This ensures UI (loading button) responds instantly to user cancellation.
+    // Applies to all AI runtime operation types so the UI transitions out of
+    // loading right away without waiting for the process to fully terminate.
+    if (AI_RUNTIME_OPERATION_TYPES.includes(operation.type)) {
       this.#get().updateOperationMetadata(operationId, { isAborting: true });
     }
 
@@ -581,11 +604,7 @@ export class OperationActionsImpl {
 
           // Remove from context index
           if (op.context.agentId) {
-            const contextKey = messageMapKey({
-              agentId: op.context.agentId,
-              groupId: op.context.groupId,
-              topicId: op.context.topicId !== undefined ? op.context.topicId : null,
-            });
+            const contextKey = messageMapKey(op.context as MessageMapKeyInput);
             const contextIndex = state.operationsByContext[contextKey];
             if (contextIndex) {
               state.operationsByContext[contextKey] = contextIndex.filter(
@@ -604,12 +623,15 @@ export class OperationActionsImpl {
             }
           }
 
-          // Remove from messageOperationMap
-          const messageEntry = Object.entries(state.messageOperationMap).find(
-            ([, opId]) => opId === operationId,
-          );
-          if (messageEntry) {
-            delete state.messageOperationMap[messageEntry[0]];
+          // Remove EVERY messageOperationMap entry pointing to this opId.
+          // Assistant + tool messages from the same turn often map to the
+          // same operation; the previous `find` + single-delete left
+          // dangling references behind, which `submitHeteroIntervention`
+          // later read back as a stale opId and threw on lookup.
+          for (const [messageId, opId] of Object.entries(state.messageOperationMap)) {
+            if (opId === operationId) {
+              delete state.messageOperationMap[messageId];
+            }
           }
         });
       }),
@@ -640,53 +662,154 @@ export class OperationActionsImpl {
     );
   };
 
-  markUnreadCompleted = (agentId: string, topicId?: string | null): void => {
-    const { activeAgentId, activeTopicId } = this.#get();
+  /**
+   * Mark a topic as having an unread completed generation by persisting
+   * `status: 'unread'`. Skipped when the user is already viewing the topic, or
+   * for the default (no-topic) conversation which has no persisted row.
+   *
+   * The write goes through `updateTopicStatus`, which optimistically patches the
+   * in-memory topic map (so the sidebar dot lights up instantly for the active
+   * agent) and persists fire-and-forget. After it persists we refresh the home
+   * sidebar list so the cross-agent unread badge updates even for agents whose
+   * topics aren't loaded on this client.
+   */
+  markTopicUnread = ({
+    agentId,
+    groupId,
+    topicId,
+  }: {
+    agentId?: string;
+    groupId?: string | null;
+    topicId?: string | null;
+  }): void => {
+    if (!topicId) return;
+    if (this.#get().activeTopicId === topicId) return;
 
-    // Only mark when user is NOT currently viewing this agent/topic
-    const isViewingAgent = activeAgentId === agentId;
-    const isViewingTopic = isViewingAgent && (activeTopicId ?? null) === (topicId ?? null);
+    void this.#get()
+      .updateTopicStatus?.({
+        agentId,
+        groupId: groupId ?? undefined,
+        status: 'unread',
+        topicId,
+      })
+      ?.then(() => {
+        void getHomeStoreState().refreshAgentList?.();
+      });
+  };
 
-    if (!isViewingAgent) {
-      this.#set(
-        produce((state: ChatStore) => {
-          state.unreadCompletedAgentIds.add(agentId);
-        }),
-        false,
-        n(`markUnreadCompleted/agent/${agentId}`),
-      );
-    }
+  /**
+   * Clear a topic's unread mark by flipping `status: 'unread'` back to 'active'.
+   * Only touches topics currently in the unread state — never stomps a
+   * running / paused / completed status. Invoked when the user opens the topic.
+   */
+  markTopicRead = ({
+    agentId,
+    groupId,
+    topicId,
+  }: {
+    agentId?: string;
+    groupId?: string | null;
+    topicId?: string | null;
+  }): void => {
+    if (!topicId) return;
 
-    if (topicId && !isViewingTopic) {
-      this.#set(
-        produce((state: ChatStore) => {
-          state.unreadCompletedTopicIds.add(topicId);
-        }),
-        false,
-        n(`markUnreadCompleted/topic/${topicId}`),
-      );
+    const key = topicMapKey({
+      agentId: agentId ?? this.#get().activeAgentId,
+      groupId: groupId ?? this.#get().activeGroupId,
+    });
+    const topic = this.#get().topicDataMap[key]?.items?.find((t) => t.id === topicId);
+    if (topic?.status !== 'unread') return;
+
+    void this.#get()
+      .updateTopicStatus?.({
+        agentId,
+        groupId: groupId ?? undefined,
+        status: 'active',
+        topicId,
+      })
+      ?.then(() => {
+        void getHomeStoreState().refreshAgentList?.();
+      });
+  };
+  // ━━━ Message Queue Actions ━━━
+
+  /**
+   * Enqueue a message for a conversation context.
+   * If a hard interrupt, also cancel the running operation.
+   */
+  enqueueMessage = (
+    contextKey: string,
+    message: QueuedMessage,
+    runningOperationId?: string,
+  ): void => {
+    log(
+      '[enqueueMessage] contextKey=%s, messageId=%s, mode=%s',
+      contextKey,
+      message.id,
+      message.interruptMode,
+    );
+
+    this.#set(
+      produce((state: ChatStore) => {
+        const queue = state.queuedMessages[contextKey] ?? [];
+        queue.push(message);
+        state.queuedMessages[contextKey] = queue;
+      }),
+      false,
+      n(`enqueueMessage/${contextKey}`),
+    );
+
+    // Hard interrupt: cancel the running operation
+    if (message.interruptMode === 'hard' && runningOperationId) {
+      const op = this.#get().operations[runningOperationId];
+      if (op?.status === 'running') {
+        log('[enqueueMessage] Hard interrupt, cancelling operation %s', runningOperationId);
+        this.#get().cancelOperation(runningOperationId, 'hard_interrupt');
+      }
     }
   };
 
-  clearUnreadCompletedAgent = (agentId: string): void => {
-    if (!this.#get().unreadCompletedAgentIds.has(agentId)) return;
+  /**
+   * Drain all queued messages for a context (atomic take-all).
+   */
+  drainQueuedMessages = (contextKey: string): QueuedMessage[] => {
+    const queue = this.#get().queuedMessages[contextKey];
+    if (!queue || queue.length === 0) return [];
+
+    const messages = [...queue];
+
     this.#set(
       produce((state: ChatStore) => {
-        state.unreadCompletedAgentIds.delete(agentId);
+        state.queuedMessages[contextKey] = [];
       }),
       false,
-      n(`clearUnreadCompleted/agent/${agentId}`),
+      n(`drainQueuedMessages/${contextKey}`),
+    );
+
+    log('[drainQueuedMessages] contextKey=%s, drained %d', contextKey, messages.length);
+    return messages;
+  };
+
+  removeQueuedMessage = (contextKey: string, messageId: string): void => {
+    this.#set(
+      produce((state: ChatStore) => {
+        const queue = state.queuedMessages[contextKey];
+        if (!queue) return;
+        const idx = queue.findIndex((m) => m.id === messageId);
+        if (idx >= 0) queue.splice(idx, 1);
+      }),
+      false,
+      n(`removeQueuedMessage/${contextKey}/${messageId}`),
     );
   };
 
-  clearUnreadCompletedTopic = (topicId: string): void => {
-    if (!this.#get().unreadCompletedTopicIds.has(topicId)) return;
+  clearMessageQueue = (contextKey: string): void => {
     this.#set(
       produce((state: ChatStore) => {
-        state.unreadCompletedTopicIds.delete(topicId);
+        delete state.queuedMessages[contextKey];
       }),
       false,
-      n(`clearUnreadCompleted/topic/${topicId}`),
+      n(`clearMessageQueue/${contextKey}`),
     );
   };
 }

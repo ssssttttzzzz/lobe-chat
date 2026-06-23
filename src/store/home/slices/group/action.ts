@@ -1,3 +1,4 @@
+import { stableWorkspaceAwareNavigate } from '@/features/Workspace/stableWorkspaceAwareNavigate';
 import { type HomeStore } from '@/store/home/store';
 import { type StoreSetter } from '@/store/types';
 
@@ -6,17 +7,14 @@ export const createGroupSlice = (set: Setter, get: () => HomeStore, _api?: unkno
   new GroupActionImpl(set, get, _api);
 
 export class GroupActionImpl {
-  readonly #get: () => HomeStore;
-
   constructor(set: Setter, get: () => HomeStore, _api?: unknown) {
     void _api;
     void set;
-    this.#get = get;
+    void get;
   }
 
   switchToGroup = (groupId: string): void => {
-    const { navigate } = this.#get();
-    navigate?.(`/group/${groupId}`);
+    stableWorkspaceAwareNavigate(`/group/${groupId}`);
   };
 }
 

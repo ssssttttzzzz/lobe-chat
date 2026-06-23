@@ -3,8 +3,9 @@
 import { AGENT_PROFILE_URL } from '@lobechat/const';
 import type { AgentEvalRunDetail } from '@lobechat/types';
 import { ActionIcon, Avatar, copyToClipboard, Flexbox, Highlighter, Markdown } from '@lobehub/ui';
+import { confirmModal } from '@lobehub/ui/base-ui';
 import { App, Button, Card, Tag, Typography } from 'antd';
-import { createStyles } from 'antd-style';
+import { createStaticStyles } from 'antd-style';
 import {
   ArrowLeft,
   ChevronDown,
@@ -17,13 +18,14 @@ import {
 } from 'lucide-react';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, useNavigate } from 'react-router-dom';
 
-import RunEditModal from '@/routes/(main)/eval/bench/[benchmarkId]/features/RunEditModal';
+import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
+import WorkspaceLink from '@/features/Workspace/WorkspaceLink';
+import { createRunEditModal } from '@/routes/(main)/eval/bench/[benchmarkId]/features/RunEditModal';
 import StatusBadge from '@/routes/(main)/eval/features/StatusBadge';
 import { useEvalStore } from '@/store/eval';
 
-const useStyles = createStyles(({ css, token }) => ({
+const styles = createStaticStyles(({ css, cssVar }) => ({
   backLink: css`
     display: inline-flex;
     gap: 4px;
@@ -32,13 +34,13 @@ const useStyles = createStyles(({ css, token }) => ({
     width: fit-content;
 
     font-size: 14px;
-    color: ${token.colorTextTertiary};
+    color: ${cssVar.colorTextTertiary};
     text-decoration: none;
 
     transition: color 0.2s;
 
     &:hover {
-      color: ${token.colorText};
+      color: ${cssVar.colorText};
     }
   `,
   configSection: css`
@@ -48,7 +50,7 @@ const useStyles = createStyles(({ css, token }) => ({
     margin-block-end: 8px;
     font-size: 12px;
     font-weight: 500;
-    color: ${token.colorTextSecondary};
+    color: ${cssVar.colorTextSecondary};
   `,
   systemRole: css`
     overflow: auto;
@@ -59,7 +61,7 @@ const useStyles = createStyles(({ css, token }) => ({
 
     font-size: 13px;
 
-    background: ${token.colorFillQuaternary};
+    background: ${cssVar.colorFillQuaternary};
   `,
   configToggle: css`
     cursor: pointer;
@@ -72,14 +74,14 @@ const useStyles = createStyles(({ css, token }) => ({
     border: none;
 
     font-size: 12px;
-    color: ${token.colorTextTertiary};
+    color: ${cssVar.colorTextTertiary};
 
     background: transparent;
 
     transition: color 0.2s;
 
     &:hover {
-      color: ${token.colorText};
+      color: ${cssVar.colorText};
     }
   `,
   datasetLink: css`
@@ -87,20 +89,20 @@ const useStyles = createStyles(({ css, token }) => ({
     text-decoration: none;
 
     &:hover {
-      color: ${token.colorPrimary};
+      color: ${cssVar.colorPrimary};
     }
   `,
   metaRow: css`
     flex-wrap: wrap;
     font-size: 13px;
-    color: ${token.colorTextTertiary};
+    color: ${cssVar.colorTextTertiary};
   `,
   modelText: css`
     font-family: monospace;
     font-size: 12px;
   `,
   separator: css`
-    color: ${token.colorBorder};
+    color: ${cssVar.colorBorder};
   `,
   titleRow: css`
     margin-block-end: 16px;
@@ -115,9 +117,8 @@ interface RunHeaderProps {
 
 const RunHeader = memo<RunHeaderProps>(({ run, benchmarkId, hideStart }) => {
   const { t } = useTranslation('eval');
-  const { styles } = useStyles();
-  const { modal, message } = App.useApp();
-  const navigate = useNavigate();
+  const { message } = App.useApp();
+  const navigate = useWorkspaceAwareNavigate();
   const abortRun = useEvalStore((s) => s.abortRun);
   const deleteRun = useEvalStore((s) => s.deleteRun);
   const startRun = useEvalStore((s) => s.startRun);
@@ -125,7 +126,6 @@ const RunHeader = memo<RunHeaderProps>(({ run, benchmarkId, hideStart }) => {
   const canStart = run.status === 'idle' || run.status === 'failed' || run.status === 'aborted';
   const [starting, setStarting] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
 
   const snapshot = run.config?.agentSnapshot;
   const agentTitle = run.targetAgent?.title || t('run.detail.agent.unnamed');
@@ -134,7 +134,7 @@ const RunHeader = memo<RunHeaderProps>(({ run, benchmarkId, hideStart }) => {
   const agentProvider = snapshot?.provider || run.targetAgent?.provider;
 
   const handleAbort = () => {
-    modal.confirm({
+    confirmModal({
       content: t('run.actions.abort.confirm'),
       okButtonProps: { danger: true },
       okText: t('run.actions.abort'),
@@ -144,7 +144,7 @@ const RunHeader = memo<RunHeaderProps>(({ run, benchmarkId, hideStart }) => {
   };
 
   const handleDelete = () => {
-    modal.confirm({
+    confirmModal({
       content: t('run.actions.delete.confirm'),
       okButtonProps: { danger: true },
       okText: t('run.actions.delete'),
@@ -157,7 +157,7 @@ const RunHeader = memo<RunHeaderProps>(({ run, benchmarkId, hideStart }) => {
   };
 
   const handleStart = () => {
-    modal.confirm({
+    confirmModal({
       content: t('run.actions.start.confirm'),
       okText: t('run.actions.start'),
       onOk: async () => {
@@ -197,10 +197,10 @@ const RunHeader = memo<RunHeaderProps>(({ run, benchmarkId, hideStart }) => {
   return (
     <Flexbox gap={16}>
       {/* Back link */}
-      <Link className={styles.backLink} to={`/eval/bench/${benchmarkId}`}>
+      <WorkspaceLink className={styles.backLink} to={`/eval/bench/${benchmarkId}`}>
         <ArrowLeft size={16} />
         {t('run.detail.backToBenchmark')}
-      </Link>
+      </WorkspaceLink>
 
       {/* Header Card */}
       <Card styles={{ body: { padding: 20 } }}>
@@ -222,13 +222,13 @@ const RunHeader = memo<RunHeaderProps>(({ run, benchmarkId, hideStart }) => {
             {/* Meta info row */}
             <Flexbox horizontal align="center" className={styles.metaRow} gap={8}>
               {run.dataset && (
-                <Link
+                <WorkspaceLink
                   className={styles.datasetLink}
                   target="_blank"
                   to={`/eval/bench/${benchmarkId}/datasets/${run.dataset.id}`}
                 >
                   {run.dataset.name}
-                </Link>
+                </WorkspaceLink>
               )}
               {run.targetAgentId && (
                 <>
@@ -278,7 +278,7 @@ const RunHeader = memo<RunHeaderProps>(({ run, benchmarkId, hideStart }) => {
               icon={Pencil}
               size="small"
               title={t('run.actions.edit')}
-              onClick={() => setEditOpen(true)}
+              onClick={() => createRunEditModal({ run })}
             />
             {isActive && (
               <ActionIcon
@@ -358,8 +358,6 @@ const RunHeader = memo<RunHeaderProps>(({ run, benchmarkId, hideStart }) => {
           </Flexbox>
         )}
       </Card>
-
-      <RunEditModal open={editOpen} run={run} onClose={() => setEditOpen(false)} />
     </Flexbox>
   );
 });

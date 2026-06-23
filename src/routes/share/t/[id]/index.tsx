@@ -1,15 +1,17 @@
 'use client';
 
-import { Button, Center } from '@lobehub/ui';
+import { Button, Center, Flexbox } from '@lobehub/ui';
 import { TRPCClientError } from '@trpc/client';
 import { createStaticStyles } from 'antd-style';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import useSWR from 'swr';
 
 import NotFound from '@/components/404';
 import Loading from '@/components/Loading/BrandTextLoading';
+import { trackLoginOrSignupClicked } from '@/features/User/UserLoginOrSignup/trackLoginOrSignupClicked';
+import { shareKeys } from '@/libs/swr/keys';
 import { lambdaClient } from '@/libs/trpc/client';
 
 import ActionBar from './features/ActionBar';
@@ -34,7 +36,7 @@ const ShareTopicPage = memo(() => {
   const { id } = useParams<{ id: string }>();
 
   const { data, error, isLoading } = useSWR(
-    id ? ['shared-topic', id] : null,
+    id ? shareKeys.topic(id) : null,
     () => lambdaClient.share.getSharedTopic.query({ shareId: id! }),
     { revalidateOnFocus: false },
   );
@@ -59,7 +61,18 @@ const ShareTopicPage = memo(() => {
             status={''}
             title={t('sharePage.error.unauthorized.title')}
             extra={
-              <Button href="/signin" type="primary">
+              <Button
+                href="/signin"
+                type="primary"
+                onClick={(event) => {
+                  event.preventDefault();
+                  void trackLoginOrSignupClicked({
+                    spm: 'share.unauthorized.signin.click',
+                  }).finally(() => {
+                    window.location.href = '/signin';
+                  });
+                }}
+              >
                 {t('sharePage.error.unauthorized.action')}
               </Button>
             }
@@ -94,17 +107,25 @@ const ShareTopicPage = memo(() => {
   if (!data) return null;
 
   return (
-    <>
+    <Flexbox height={'100%'} style={{ position: 'relative' }} width={'100%'}>
       <SharedMessageList
         agentId={data.agentId}
         groupId={data.groupId}
         shareId={data.shareId}
         topicId={data.topicId}
       />
-      <Center padding={8}>
+      <Center
+        paddingBlock={16}
+        style={{
+          bottom: 0,
+          insetInline: 0,
+          pointerEvents: 'none',
+          position: 'absolute',
+        }}
+      >
         <ActionBar data={data} />
       </Center>
-    </>
+    </Flexbox>
   );
 });
 

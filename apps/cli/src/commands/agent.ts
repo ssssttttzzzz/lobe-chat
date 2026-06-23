@@ -4,37 +4,22 @@ import type { Command } from 'commander';
 import pc from 'picocolors';
 
 import { getTrpcClient } from '../api/client';
-import { getAuthInfo } from '../api/http';
-import { replayAgentEvents, streamAgentEvents } from '../utils/agentStream';
+import { getAgentStreamAuthInfo } from '../api/http';
+import { resolveAgentGatewayUrl } from '../settings';
+import {
+  replayAgentEvents,
+  streamAgentEvents,
+  streamAgentEventsViaWebSocket,
+} from '../utils/agentStream';
+import { resolveLocalDeviceId } from '../utils/device';
 import { confirm, outputJson, printTable, truncate } from '../utils/format';
 import { log, setVerbose } from '../utils/logger';
-
-/**
- * Resolve an agent identifier (agentId or slug) to a concrete agentId.
- * When a slug is provided, uses getBuiltinAgent to look up the agent.
- */
-async function resolveAgentId(
-  client: any,
-  opts: { agentId?: string; slug?: string },
-): Promise<string> {
-  if (opts.agentId) return opts.agentId;
-
-  if (opts.slug) {
-    const agent = await client.agent.getBuiltinAgent.query({ slug: opts.slug });
-    if (!agent) {
-      log.error(`Agent not found for slug: ${opts.slug}`);
-      process.exit(1);
-    }
-    return (agent as any).id || (agent as any).agentId;
-  }
-
-  log.error('Either <agentId> or --slug is required.');
-  process.exit(1);
-  return ''; // unreachable
-}
+import { resolveAgentId } from './agent/resolveAgentId';
+import { registerAgentSpaceFsCommand } from './agent/spaceFs';
 
 export function registerAgentCommand(program: Command) {
   const agent = program.command('agent').description('Manage agents');
+  registerAgentSpaceFsCommand(agent);
 
   // ── list ──────────────────────────────────────────────
 
@@ -248,17 +233,29 @@ export function registerAgentCommand(program: Command) {
     .option('-p, --prompt <text>', 'User prompt')
     .option('-t, --topic-id <id>', 'Reuse an existing topic')
     .option('--no-auto-start', 'Do not auto-start the agent')
+    .option(
+      '--device <target>',
+      'Target device ID, or use "local" for the current connected device',
+    )
+    .option(
+      '--no-headless',
+      "Disable headless mode and wait for human approval on tool calls (default: headless — tools auto-run, matching the CLI's non-interactive nature)",
+    )
     .option('--json', 'Output full JSON event stream')
     .option('-v, --verbose', 'Show detailed tool call info')
     .option('--replay <file>', 'Replay events from a saved JSON file (offline)')
+    .option('--sse', 'Force SSE stream instead of WebSocket gateway')
     .action(
       async (options: {
         agentId?: string;
         autoStart?: boolean;
+        device?: string;
+        headless?: boolean;
         json?: boolean;
         prompt?: string;
         replay?: string;
         slug?: string;
+        sse?: boolean;
         topicId?: string;
         verbose?: boolean;
       }) => {
@@ -285,12 +282,53 @@ export function registerAgentCommand(program: Command) {
 
         const client = await getTrpcClient();
 
+        let deviceId: string | undefined;
+        if (options.device !== undefined) {
+          if (options.device === 'local') {
+            deviceId = resolveLocalDeviceId();
+            if (!deviceId) {
+              log.error(
+                "No local device found. Run 'lh connect' first, then retry with --device local.",
+              );
+              process.exit(1);
+              return;
+            }
+          } else {
+            deviceId = options.device;
+          }
+
+          const devices = await client.device.listDevices.query();
+          const matchedDevice = devices.find(
+            (device: { deviceId?: string; online?: boolean }) => device.deviceId === deviceId,
+          );
+          if (!matchedDevice) {
+            log.error(`Device "${deviceId}" was not found. Check 'lh device list' and try again.`);
+            process.exit(1);
+            return;
+          }
+          if (!matchedDevice.online) {
+            log.error(
+              options.device === 'local'
+                ? `Local device "${deviceId}" is not online. Reconnect with 'lh connect' and try again.`
+                : `Device "${deviceId}" is not online. Bring it online and try again.`,
+            );
+            process.exit(1);
+            return;
+          }
+        }
+
         // 1. Exec agent to get operationId
-        const input: Record<string, any> = { prompt: options.prompt };
+        const input: Record<string, any> = { prompt: options.prompt, trigger: 'cli' };
         if (options.agentId) input.agentId = options.agentId;
+        if (deviceId) input.deviceId = deviceId;
         if (options.slug) input.slug = options.slug;
         if (options.topicId) input.appContext = { topicId: options.topicId };
         if (options.autoStart === false) input.autoStart = false;
+        // commander's --no-headless sets `headless` to false. Anything else
+        // (undefined, true) → headless mode is on and tool calls auto-execute.
+        if (options.headless !== false) {
+          input.userInterventionConfig = { approvalMode: 'headless' };
+        }
 
         const result = await client.aiAgent.execAgent.mutate(input as any);
         const r = result as any;
@@ -305,14 +343,38 @@ export function registerAgentCommand(program: Command) {
           log.info(`Operation: ${pc.dim(operationId)} · Topic: ${pc.dim(r.topicId || 'n/a')}`);
         }
 
-        // 2. Connect to SSE stream
-        const { serverUrl, headers } = await getAuthInfo();
-        const streamUrl = `${serverUrl}/api/agent/stream?operationId=${encodeURIComponent(operationId)}`;
+        // 2. Connect to stream (WebSocket via Gateway, or fallback to SSE)
+        const { serverUrl, headers, token, tokenType } = await getAgentStreamAuthInfo();
+        const agentGatewayUrl = options.sse ? undefined : resolveAgentGatewayUrl();
 
-        await streamAgentEvents(streamUrl, headers, {
-          json: options.json,
-          verbose: options.verbose,
-        });
+        try {
+          if (agentGatewayUrl) {
+            await streamAgentEventsViaWebSocket({
+              gatewayUrl: agentGatewayUrl,
+              json: options.json,
+              operationId,
+              serverUrl,
+              token,
+              tokenType,
+              verbose: options.verbose,
+            });
+          } else {
+            const streamUrl = `${serverUrl}/api/agent/stream?operationId=${encodeURIComponent(operationId)}`;
+            await streamAgentEvents(streamUrl, headers, {
+              json: options.json,
+              verbose: options.verbose,
+            });
+          }
+        } catch (error) {
+          // The live stream (gateway WS / SSE) dropped before the run finished —
+          // the run is still executing server-side. Instead of failing, fall back
+          // to polling the run status until it reaches a terminal state.
+          if (options.json) throw error;
+          log.warn(
+            `Live stream unavailable (${(error as Error).message}). Polling run status every 10s…`,
+          );
+          await pollAgentRunStatus(client, operationId);
+        }
       },
     );
 
@@ -572,6 +634,59 @@ function colorStatus(status: string): string {
     }
     default: {
       return pc.dim(status);
+    }
+  }
+}
+
+const TERMINAL_RUN_STATUSES = new Set([
+  'completed',
+  'done',
+  'success',
+  'failed',
+  'error',
+  'cancelled',
+  'canceled',
+  'aborted',
+]);
+
+/**
+ * Fallback when the live stream (gateway WebSocket / SSE) drops before the run
+ * finishes: the run is still executing server-side, so poll its status every 10s
+ * until it reaches a terminal state (or is no longer tracked, which also means it
+ * has finished). Avoids hard-exiting on a transient gateway disconnect.
+ */
+async function pollAgentRunStatus(
+  client: Awaited<ReturnType<typeof getTrpcClient>>,
+  operationId: string,
+): Promise<void> {
+  const POLL_MS = 10_000;
+  let lastStatus = '';
+  for (let i = 0; ; i++) {
+    if (i > 0) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+
+    let r: any;
+    try {
+      r = await client.aiAgent.getOperationStatus.query({ operationId } as any);
+    } catch (error) {
+      log.error(`Status poll failed: ${(error as Error).message}`);
+      process.exit(1);
+    }
+
+    if (!r) {
+      log.info('Run is no longer tracked — finished (or expired).');
+      return;
+    }
+
+    const status = r.status || r.state || 'unknown';
+    if (status !== lastStatus) {
+      lastStatus = status;
+      const steps = r.stepCount !== undefined ? ` · ${r.stepCount} step(s)` : '';
+      log.info(`Run status: ${colorStatus(status)}${steps}`);
+    }
+
+    if (TERMINAL_RUN_STATUSES.has(status)) {
+      if (r.error) log.error(`Run error: ${r.error}`);
+      return;
     }
   }
 }

@@ -1,34 +1,43 @@
+import {
+  type AgentDocumentSkillsState,
+  initialAgentDocumentSkillsState,
+} from './slices/agentDocumentSkills/initialState';
 import { type AgentSkillsState, initialAgentSkillsState } from './slices/agentSkills/initialState';
 import { type BuiltinToolState, initialBuiltinToolState } from './slices/builtin/initialState';
+import {
+  type ComposioStoreState,
+  initialComposioStoreState,
+} from './slices/composioStore/initialState';
+import { type ConnectorState, initialConnectorState } from './slices/connector/initialState';
 import {
   type CustomPluginState,
   initialCustomPluginState,
 } from './slices/customPlugin/initialState';
-import { initialKlavisStoreState, type KlavisStoreState } from './slices/klavisStore/initialState';
 import {
   initialLobehubSkillStoreState,
   type LobehubSkillStoreState,
 } from './slices/lobehubSkillStore/initialState';
 import { initialMCPStoreState, type MCPStoreState } from './slices/mcpStore/initialState';
-import { initialPluginStoreState, type PluginStoreState } from './slices/oldStore/initialState';
 import { initialPluginState, type PluginState } from './slices/plugin/initialState';
 
-export type ToolStoreState = PluginState &
+export type ToolStoreState = ConnectorState &
+  PluginState &
   CustomPluginState &
-  PluginStoreState &
   BuiltinToolState &
   MCPStoreState &
-  KlavisStoreState &
+  ComposioStoreState &
   LobehubSkillStoreState &
-  AgentSkillsState;
+  AgentSkillsState &
+  AgentDocumentSkillsState;
 
 export const initialState: ToolStoreState = {
+  ...initialConnectorState,
   ...initialPluginState,
   ...initialCustomPluginState,
-  ...initialPluginStoreState,
   ...initialBuiltinToolState,
   ...initialMCPStoreState,
-  ...initialKlavisStoreState,
+  ...initialComposioStoreState,
   ...initialLobehubSkillStoreState,
   ...initialAgentSkillsState,
+  ...initialAgentDocumentSkillsState,
 };
